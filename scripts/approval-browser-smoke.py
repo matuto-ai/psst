@@ -2,9 +2,16 @@
 import json
 import os
 import pathlib
+import re
 import subprocess
 import tempfile
-from playwright.sync_api import Error as PlaywrightError, sync_playwright
+from playwright.sync_api import Error as PlaywrightError, expect, sync_playwright
+
+
+def assert_approval_state(page, request_id, state):
+    """Check only this request's status badge, not an untrusted row label."""
+    badge = page.locator('[data-request-id="' + request_id + '"]').locator('.badge')
+    expect(badge).to_have_text(re.compile(r"^\s*" + re.escape(state) + r"\s*$", re.IGNORECASE))
 
 
 def initial_login_page(page, url):
@@ -87,7 +94,7 @@ def main():
                     page.wait_for_load_state("domcontentloaded")
                 assert password not in page.content()
                 for request_id, state in [(ids[0], "approved"), (ids[1], "denied"), (ids[2], "revoked")]:
-                    assert state in page.locator('[data-request-id="' + request_id + '"]').inner_text()
+                    assert_approval_state(page, request_id, state)
                 page.screenshot(path=str(artifacts / "03-approved-denied-revoked.png"), full_page=True)
                 # Only the separate private temp file carries a synthetic cookie.
                 # Never upload this file or write it to the screenshot directory.
