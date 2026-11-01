@@ -4212,6 +4212,89 @@
           }
         }
       }
+    },
+    "/admin/sessions": {
+      "get": {
+        "operationId": "adminSessions",
+        "description": "Authenticated session registry: exact client_id, installation_id, client_type and state filters; limit defaults to 10, maximum 100; signed filter-bound cursor. Safe metadata only, no credentials or message bodies. All responses are HTML with no-store and restrictive CSP. An unauthenticated request returns only the login form. See docs/admin-console.md.",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Login form or authenticated HTML page; data requires a valid administrator cookie."
+          },
+          "400": {
+            "description": "Invalid filter, identifier or cursor; no data returned."
+          },
+          "404": {
+            "description": "Message or page unavailable."
+          }
+        }
+      }
+    },
+    "/admin/messages": {
+      "get": {
+        "operationId": "adminMessages",
+        "description": "Authenticated metadata-only message history: sender_id, recipient_id, status, accepted_after/accepted_before UTC filters; newest first, default limit 10 maximum 100 and signed cursor. No body or snippet on this list. All responses are HTML with no-store and restrictive CSP. An unauthenticated request returns only the login form. See docs/admin-console.md.",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Login form or authenticated HTML page; data requires a valid administrator cookie."
+          },
+          "400": {
+            "description": "Invalid filter, identifier or cursor; no data returned."
+          },
+          "404": {
+            "description": "Message or page unavailable."
+          }
+        }
+      }
+    },
+    "/admin/messages/{message_id}": {
+      "get": {
+        "operationId": "adminMessageDetail",
+        "description": "Authenticated explicit individual message read with original escaped content, or retained-content unavailable state. Read-only, no resend/cancel. All responses are HTML with no-store and restrictive CSP. An unauthenticated request returns only the login form. See docs/admin-console.md.",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Login form or authenticated HTML page; data requires a valid administrator cookie."
+          },
+          "400": {
+            "description": "Invalid filter, identifier or cursor; no data returned."
+          },
+          "404": {
+            "description": "Message or page unavailable."
+          }
+        },
+        "parameters": [
+          {
+            "name": "message_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ]
+      }
+    },
+    "/admin/approvals": {
+      "get": {
+        "operationId": "adminApprovals",
+        "description": "Authenticated installation approvals. Preserves existing approval/revocation forms. /admin is a compatibility alias. All responses are HTML with no-store and restrictive CSP. An unauthenticated request returns only the login form. See docs/admin-console.md.",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Login form or authenticated HTML page; data requires a valid administrator cookie."
+          },
+          "400": {
+            "description": "Invalid filter, identifier or cursor; no data returned."
+          },
+          "404": {
+            "description": "Message or page unavailable."
+          }
+        }
+      }
     }
   },
   "components": {
