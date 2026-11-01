@@ -2,12 +2,13 @@ import { DatabaseSync, backup } from 'node:sqlite';
 import { randomUUID } from 'node:crypto';
 import { mkdirSync, chmodSync, statfsSync, statSync, realpathSync, lstatSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
-import { ApiError, DEFAULTS, canonical, digest, validateRegistration, validateMetadataPatch, validateSend, validateClaim, validateCompletion, validateRenew, validateIdempotencyKey } from './protocol.mjs';
+import { ApiError, DEFAULTS, canonical, digest, validateRegistration, validateMetadataPatch, validateSend, validateClaim, validateCompletion, validateRenew, validateIdempotencyKey, validateUuid } from './protocol.mjs';
 
 const iso = n => new Date(n).toISOString();
 const parse = JSON.parse;
 const terminal = s => ['delivered', 'expired', 'failed'].includes(s);
 const fail = (status, code, field, options) => { throw new ApiError(status, code, field, options); };
+const HISTORY_BYTES = 32768, HISTORY_SCAN = 1000;
 const intersects = (a, b) => a.some(x => b.includes(x));
 
 /** One synchronous writer. All state transitions run in BEGIN IMMEDIATE transactions. */
@@ -85,6 +86,18 @@ export class BrokerStore {
         claimed_at INTEGER, delivered_at INTEGER, terminal_at INTEGER, UNIQUE(recipient,sequence));
       CREATE INDEX IF NOT EXISTS mailbox ON messages(recipient,state,sequence);
       CREATE INDEX IF NOT EXISTS retention ON messages(terminal_at);
+      CREATE INDEX IF NOT EXISTS outgoing_history ON messages(sender,accepted DESC,id DESC);
+      CREATE INDEX IF NOT EXISTS outgoing_expiry ON messages(sender,state,expires);
+      CREATE TABLE IF NOT EXISTS history_revisions (sender TEXT PRIMARY KEY, revision INTEGER NOT NULL);
+      CREATE TABLE IF NOT EXISTS history_state_revisions (sender TEXT NOT NULL,state TEXT NOT NULL,revision INTEGER NOT NULL,PRIMARY KEY(sender,state));
+      DROP TRIGGER IF EXISTS history_updated;
+      CREATE TRIGGER history_updated AFTER UPDATE OF state ON messages WHEN OLD.state<>NEW.state AND NEW.state<>'expired' BEGIN
+        INSERT INTO history_state_revisions VALUES(NEW.sender,OLD.state,1) ON CONFLICT(sender,state) DO UPDATE SET revision=revision+1;
+        INSERT INTO history_state_revisions VALUES(NEW.sender,NEW.state,1) ON CONFLICT(sender,state) DO UPDATE SET revision=revision+1;
+      END;
+      CREATE TRIGGER IF NOT EXISTS history_deleted AFTER DELETE ON messages BEGIN
+        INSERT INTO history_revisions VALUES(OLD.sender,1) ON CONFLICT(sender) DO UPDATE SET revision=revision+1;
+      END;
       CREATE TABLE IF NOT EXISTS sends (
         principal TEXT NOT NULL, sender TEXT NOT NULL, key TEXT NOT NULL, request TEXT NOT NULL,
         message TEXT NOT NULL REFERENCES messages(id), scope TEXT NOT NULL, result TEXT NOT NULL,
@@ -100,6 +113,15 @@ export class BrokerStore {
     this.db.exec('BEGIN IMMEDIATE');
     try{
       if(!this.db.prepare('PRAGMA table_info(messages)').all().some(c=>c.name==='claim_prior_uncertain'))this.db.exec('ALTER TABLE messages ADD COLUMN claim_prior_uncertain INTEGER NOT NULL DEFAULT 0');
+      if(!this.db.prepare('PRAGMA table_info(messages)').all().some(c=>c.name==='history_order')){
+        this.db.exec('ALTER TABLE messages ADD COLUMN history_order INTEGER; UPDATE messages SET history_order=rowid;');
+      }
+      this.db.exec(`CREATE TABLE IF NOT EXISTS history_clock(id INTEGER PRIMARY KEY CHECK(id=1),n INTEGER NOT NULL);
+        INSERT OR IGNORE INTO history_clock SELECT 1,coalesce(max(history_order),0) FROM messages;
+        CREATE TRIGGER IF NOT EXISTS history_inserted AFTER INSERT ON messages BEGIN
+          UPDATE history_clock SET n=n+1 WHERE id=1;
+          UPDATE messages SET history_order=(SELECT n FROM history_clock WHERE id=1) WHERE id=NEW.id;
+        END;`);
       this.db.exec(`PRAGMA user_version=${Math.max(version, 2)}; COMMIT`);
     }catch(e){this.db.exec('ROLLBACK');throw e;}
   }
@@ -276,6 +298,73 @@ export class BrokerStore {
       m=this.db.prepare('SELECT * FROM messages WHERE id=?').get(id);
     }
     return this.receiptRow(m);
+  }
+  ownedMessage(auth, client, id) {
+    this.own(auth,client);
+    const m=this.db.prepare('SELECT * FROM messages WHERE id=?').get(id);
+    if(!m||m.sender!==client||!auth.scopes.includes(m.scope)) fail(404,'message_not_found');
+    return m;
+  }
+  messageContent(auth,client,id) {
+    this.sweep();
+    const m=this.ownedMessage(auth,client,id);
+    if(!m.envelope) fail(410,'content_unavailable');
+    return {sender_id:m.sender,...this.receiptRow(m),envelope:parse(m.envelope)};
+  }
+  history(auth,client,query={}) {
+    this.own(auth,client);
+    const allowed=['recipient_id','status','accepted_after','accepted_before','limit','cursor'];
+    if(Object.keys(query).some(k=>!allowed.includes(k))) fail(400,'invalid_request','query');
+    const limit=query.limit===undefined?10:Number(query.limit);
+    if(!Number.isSafeInteger(limit)||limit<1||limit>100||query.limit!==undefined&&!/^[1-9][0-9]*$/.test(String(query.limit))) fail(400,'invalid_request','query.limit');
+    const filter={};
+    if(query.recipient_id!==undefined) filter.recipient_id=validateUuid(query.recipient_id,'query.recipient_id');
+    if(query.status!==undefined){
+      if(!['queued','claimed','delivered','expired','failed'].includes(query.status)) fail(400,'invalid_request','query.status');
+      filter.status=query.status;
+    }
+    for(const key of ['accepted_after','accepted_before']) if(query[key]!==undefined){
+      const n=Date.parse(query[key]);
+      if(!Number.isSafeInteger(n)||iso(n)!==query[key]) fail(400,'invalid_request',`query.${key}`);
+      filter[key]=n;
+    }
+    if(filter.accepted_after!==undefined&&filter.accepted_before!==undefined&&filter.accepted_after>=filter.accepted_before) fail(400,'invalid_request','query');
+    this.sweep();
+    const fingerprint=digest({client,filter,scopes:[...auth.scopes].sort()}), revision=this.db.prepare('SELECT revision FROM history_revisions WHERE sender=?').get(client)?.revision??0;
+    const stateRevision=filter.status?(this.db.prepare('SELECT revision FROM history_state_revisions WHERE sender=? AND state=?').get(client,filter.status)?.revision??0):0;
+    let cursor;
+    if(query.cursor!==undefined){
+      try{
+        if(typeof query.cursor!=='string'||query.cursor.length>1024||!/^[A-Za-z0-9_-]+$/.test(query.cursor)) throw Error();
+        cursor=parse(Buffer.from(query.cursor,'base64url').toString());
+        if(!cursor||Object.keys(cursor).sort().join(',')!=='after,id,revision,snapshot,state_revision,time,valid_until,view'||cursor.view!==fingerprint||!Number.isSafeInteger(cursor.snapshot)||cursor.snapshot<0||!Number.isSafeInteger(cursor.revision)||cursor.revision<0||!Number.isSafeInteger(cursor.state_revision)||cursor.state_revision<0||!Number.isSafeInteger(cursor.after)||!Number.isSafeInteger(cursor.valid_until)||!Number.isSafeInteger(cursor.time)||Math.abs(cursor.time)>8640000000000000||Math.abs(cursor.after)>8640000000000000) throw Error();
+        validateUuid(cursor.id);
+      }catch{fail(400,'invalid_request','query.cursor');}
+      if(cursor.state_revision!==stateRevision||['queued','claimed','expired'].includes(filter.status)&&this.clock()>=cursor.valid_until) fail(409,'history_changed','query.cursor');
+    } else cursor={view:fingerprint,revision,state_revision:stateRevision,snapshot:this.db.prepare('SELECT n FROM history_clock WHERE id=1').get().n,time:this.clock(),valid_until:this.db.prepare("SELECT min(expires) n FROM messages WHERE sender=? AND state IN ('queued','claimed') AND expires>?").get(client,this.clock()).n??8640000000000000,after:8640000000000000,id:'ffffffff-ffff-4fff-bfff-ffffffffffff'};
+    // Only metadata is selected. A page inspects at most 1000 candidates; sparse
+    // filters may yield empty pages with a continuation, never an unbounded scan.
+    const columns='history_order,id,sender,recipient,scope,sequence,state,accepted,expires,attempts,reason,uncertain,claimed_at,delivered_at,terminal_at';
+    const rows=this.db.prepare(`SELECT ${columns} FROM messages WHERE sender=? AND (accepted,id)<(?,?) ORDER BY accepted DESC,id DESC LIMIT ?`).all(client,cursor.after,cursor.id,HISTORY_SCAN+1);
+    const result={messages:[],next_cursor:null,retention_changed:cursor.revision!==revision,snapshot_at:iso(cursor.time),server_time:iso(this.clock())};
+    const encode=c=>Buffer.from(canonical(c)).toString('base64url');
+    let consumed=0,last=cursor;
+    for(const m of rows){
+      // Expiry is a clock fact even when bounded background cleanup has not yet
+      // persisted this row. Its cursor deadline handles filter membership changes.
+      if(!terminal(m.state)&&m.expires<=this.clock()){m.state='expired';m.reason='ttl_expired';m.terminal_at=m.expires;}
+      if(consumed===HISTORY_SCAN||result.messages.length===limit) break;
+      const next={...cursor,after:m.accepted,id:m.id};
+      const matches=m.history_order<=cursor.snapshot&&auth.scopes.includes(m.scope)&&(!filter.recipient_id||m.recipient===filter.recipient_id)&&(!filter.status||m.state===filter.status)&&(filter.accepted_after===undefined||m.accepted>=filter.accepted_after)&&(filter.accepted_before===undefined||m.accepted<filter.accepted_before);
+      if(matches){
+        const item={sender_id:m.sender,...this.receiptRow(m)};
+        if(Buffer.byteLength(JSON.stringify({...result,messages:[...result.messages,item],next_cursor:encode(next)}))>HISTORY_BYTES) break;
+        result.messages.push(item);
+      }
+      consumed++;last=next;
+    }
+    if(consumed<rows.length) result.next_cursor=encode(last);
+    return result;
   }
   sweepInternal(batch=100) {
     const now=this.clock();

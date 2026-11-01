@@ -471,3 +471,7 @@ These primary sources were inspected for candidate mechanisms on 2026-10-23. The
 - [Existing Pi review-pair repository](https://github.com/brunoorsolon/pi-intercom-review-pair): workflow compatibility source; its existing local assumptions are not the new broker contract.
 
 No private network address, credential, native transcript, or personal workspace path is needed to implement this public specification.
+
+## Outgoing message history
+
+See [owned outgoing history](message-history.md) for bounded metadata listing and explicit sender-owned content retrieval.

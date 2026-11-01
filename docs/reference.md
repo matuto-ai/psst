@@ -240,3 +240,7 @@ absolute request deadlines, stable send keys and real broker HTTP integration.
 MCP tests cover handshake, argument/frame bounds, lifecycle, safe output and the
 non-consuming cooperative boundary. Real CLI safety, container deployment and
 two-host LAN operation require their separately recorded integration evidence.
+
+## Outgoing message history
+
+See [owned outgoing history](message-history.md) for bounded metadata listing and explicit sender-owned content retrieval.

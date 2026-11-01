@@ -17,6 +17,8 @@ const ERROR_TEXT = Object.freeze({
   forbidden: ['This operation is not authorized.', 'Check the enrolled adapter permissions.'],
   recipient_not_found: ['The recipient is not available.', 'Select an exact authorized client ID from discovery.'],
   message_not_found: ['The message is not available.', 'Use a message ID owned by this principal.'],
+  history_changed: ['History changed while paging.', 'Restart the listing without a cursor; no continuation was silently skipped.'],
+  content_unavailable: ['The original content is no longer retained.', 'Use the receipt; unavailable content cannot be reconstructed.'],
   identity_conflict: ['The session identity conflicts with an existing registration.', 'Do not adopt another session; verify the local session identity.'],
   stale_lease_epoch: ['Reconnect this session before retrying.', 'Read owned registration state and reconnect; do not blindly replay a mutation.'],
   idempotency_conflict: ['This key was already used for a different request.', 'Reconcile the original request; do not change an uncertain request.'],

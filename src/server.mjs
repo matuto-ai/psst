@@ -90,13 +90,17 @@ export function createBrokerServer({ store, auth, enrollment, approval, admin, r
       if(req.headers.origin)throw new ApiError(403,'forbidden','headers.Origin');
       // Query-string authentication and duplicate parameters are never accepted.
       const params={};for(const[k,v]of url.searchParams){if(Object.hasOwn(params,k))throw new ApiError(400,'invalid_request','query');params[k]=v;}
-      if(url.pathname!=='/v1/clients'&&Object.keys(params).length)throw new ApiError(400,'invalid_request','query');
+      if(!['/v1/clients','/v1/messages'].includes(url.pathname)&&Object.keys(params).length)throw new ApiError(400,'invalid_request','query');
       if(url.pathname==='/v1/sessions'&&req.method==='POST')return reply(res,200,store.register(principal,await body(req)));
       if(url.pathname==='/v1/clients'&&req.method==='GET')return reply(res,200,store.list(principal,params));
       const sessionRoute=/^\/v1\/sessions\/([^/]+)(?:\/(heartbeat|metadata|close))?$/.exec(url.pathname);
       if(sessionRoute&&req.method==='GET'&&!sessionRoute[2]){sessionRoute[1]=validateUuid(sessionRoute[1],'path.client_id');return reply(res,200,store.session(principal,sessionRoute[1]));}
       const id=validateUuid(req.headers['x-client-id'],'headers.X-Client-ID');
       const rawEpoch=req.headers['x-lease-epoch'],epoch=Number(rawEpoch);
+      if(url.pathname==='/v1/messages'&&req.method==='GET')return reply(res,200,store.history(principal,id,params));
+      if(Object.keys(params).length)throw new ApiError(400,'invalid_request','query');
+      const contentRoute=/^\/v1\/messages\/([^/]+)\/content$/.exec(url.pathname);
+      if(contentRoute&&req.method==='GET')return reply(res,200,store.messageContent(principal,id,validateUuid(contentRoute[1],'path.message_id')));
       const messageRoute=/^\/v1\/messages\/([^/]+)$/.exec(url.pathname);
       if(messageRoute&&req.method==='GET'){messageRoute[1]=validateUuid(messageRoute[1],'path.message_id');return reply(res,200,store.receipt(principal,id,messageRoute[1]));}
       if(typeof rawEpoch!=='string'||!/^[1-9]\d*$/.test(rawEpoch)||!Number.isSafeInteger(epoch)||epoch<1)throw new ApiError(400,'invalid_request','headers.X-Lease-Epoch');

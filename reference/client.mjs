@@ -8,7 +8,7 @@ import { ApiError, canonical, validateMetadata, validateRegistration, validateMe
 import { LocalError } from './errors.mjs';
 
 const ALLOWED_ERROR_CODES = new Set(['invalid_request', 'unauthenticated', 'forbidden', 'recipient_not_found',
-  'message_not_found', 'identity_conflict', 'stale_lease_epoch', 'idempotency_conflict', 'metadata_conflict',
+  'message_not_found', 'history_changed', 'content_unavailable', 'identity_conflict', 'stale_lease_epoch', 'idempotency_conflict', 'metadata_conflict',
   'claim_conflict', 'session_closed', 'message_expired', 'payload_too_large',
   'incompatible_receiver_transport', 'receiving_disabled', 'rate_limited', 'mailbox_full',
   'storage_unavailable', 'not_ready']);
@@ -286,6 +286,18 @@ export class BrokerClient {
       // Sender revision is not guessed; reconcile from owned state before a future CAS mutation.
     }
     return { ...result, send_key: key };
+  }
+
+  async sentHistory(filters = {}, { signal } = {}) {
+    const allowed=['recipient_id','status','accepted_after','accepted_before','limit','cursor'];
+    if(!filters||typeof filters!=='object'||Array.isArray(filters)||Object.keys(filters).some(key=>!allowed.includes(key))) throw new LocalError('invalid_configuration');
+    const query=new URLSearchParams();
+    for(const [key,value] of Object.entries(filters)) query.set(key,String(value));
+    return this.request('GET',`/v1/messages${query.size?`?${query}`:''}`,{idempotent:true,signal});
+  }
+
+  async messageContent(messageId, { signal } = {}) {
+    return this.request('GET',`/v1/messages/${validateUuid(messageId)}/content`,{idempotent:true,signal});
   }
 
   async messageStatus(messageId, { signal } = {}) {

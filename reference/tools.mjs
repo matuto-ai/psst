@@ -33,6 +33,11 @@ export function createTools({ client, inbox = client?.inbox, observeMetadata = n
       if (!arguments_ || Object.keys(arguments_).some(key => !['metadata_patch', 'expected_metadata_revision'].includes(key))) throw new LocalError('invalid_configuration');
       return client.updateMetadata(arguments_.metadata_patch, { expectedRevision: arguments_.expected_metadata_revision });
     },
+    async broker_sent_history(arguments_ = {}) { return client.sentHistory(arguments_); },
+    async broker_message_content(arguments_) {
+      if(!arguments_||Object.keys(arguments_).join(',')!=='message_id') throw new LocalError('invalid_configuration');
+      return client.messageContent(arguments_.message_id);
+    },
     async broker_message_status(arguments_) {
       if (!arguments_ || Object.keys(arguments_).join(',') !== 'message_id') throw new LocalError('invalid_configuration');
       return client.messageStatus(arguments_.message_id);
