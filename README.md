@@ -17,6 +17,7 @@ New source workflow: native setup asks only for the broker URL, followed by appr
 - [v1 specification](docs/spec-v1.md)
 - [OpenAPI 3.1 contract](openapi.json) and [canonical serialization](docs/contract.md)
 - [Reference adapter/runtime](docs/reference.md), [operations and containers](docs/operations.md)
+- [Presence, resumable disconnect and offline notices](docs/presence.md)
 - [Verification record](docs/verification.md) and [real-CLI compatibility gates](docs/feasibility.md)
 - [Implementation issues and milestones](docs/implementation-plan.md)
 

@@ -643,12 +643,13 @@ test('native send and resend forward internal cancellation signals without expos
 test('all networked facade operations forward the private host shutdown signal',async t=>{
  const f=local(t),signal=new AbortController().signal;const seen=[];
  const client={inbox:f.inbox};
- for(const method of ['listClients','sentHistory','messageContent','messageStatus','cancelMessage','updateMetadata'])client[method]=async(_input,options)=>{seen.push([method,options.signal]);return {};};
+ for(const method of ['listClients','sentHistory','messageContent','messageStatus','cancelMessage','updateMetadata','presenceEvents','acknowledgePresenceEvent'])client[method]=async(_input,options)=>{seen.push([method,options.signal]);return {};};
  const tools=createTools({client});
- for(const name of ['broker_list_clients','broker_sent_history'])await invokeTool(tools,name,{}, {signal});
+ for(const name of ['broker_list_clients','broker_sent_history','broker_presence_events'])await invokeTool(tools,name,{}, {signal});
  for(const name of ['broker_message_content','broker_message_status','broker_cancel'])await invokeTool(tools,name,{message_id:randomUUID()},{signal});
  await invokeTool(tools,'broker_update_metadata',{metadata_patch:{name:'same'},expected_metadata_revision:1},{signal});
- assert.equal(seen.length,6);assert.ok(seen.every(([,actual])=>actual===signal));
+ await invokeTool(tools,'broker_acknowledge_presence_event',{event_id:randomUUID()},{signal});
+ assert.equal(seen.length,8);assert.ok(seen.every(([,actual])=>actual===signal));
 });
 
 

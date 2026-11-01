@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 export const TYPES = Object.freeze(['pi', 'antigravity-cli', 'claude-code', 'opencode']);
 export const DEFAULTS = Object.freeze({
   heartbeat_seconds: 60, lease_seconds: 180, claim_seconds: 120, max_wait_seconds: 30,
+  offline_notice_seconds: 600,
   default_ttl_seconds: 86400, min_ttl_seconds: 60, max_ttl_seconds: 604800,
   max_message_bytes: 65536, max_request_bytes: 98304,
   max_pending_messages: 1000, max_pending_bytes: 67108864,

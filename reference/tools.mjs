@@ -57,6 +57,11 @@ export function createTools({ client, inbox = client?.inbox, observeMetadata = n
       if(!arguments_||Object.keys(arguments_).join(',')!=='message_id') throw new LocalError('invalid_configuration');
       return client.messageContent(arguments_.message_id,{signal:context.signal});
     },
+    async broker_presence_events(arguments_ = {}, context = {}) { return client.presenceEvents(arguments_, {signal:context.signal}); },
+    async broker_acknowledge_presence_event(arguments_, context = {}) {
+      if (!arguments_ || Object.keys(arguments_).join(',') !== 'event_id') throw new LocalError('invalid_configuration');
+      return client.acknowledgePresenceEvent(arguments_.event_id, {signal:context.signal});
+    },
     async broker_message_status(arguments_, context = {}) {
       if (!arguments_ || Object.keys(arguments_).join(',') !== 'message_id') throw new LocalError('invalid_configuration');
       return client.messageStatus(arguments_.message_id,{signal:context.signal});

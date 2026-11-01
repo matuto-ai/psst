@@ -54,6 +54,29 @@ test('method, argument and schema bounds fail before tool effects', async () => 
   assert.equal(calls, 0); await f.server.close();
 });
 
+test('presence polling and ACK are discoverable bounded cooperative tools', async () => {
+  const calls = [], eventId = '11111111-1111-4111-8111-111111111111';
+  const f = fixture({
+    broker_presence_events: async args => { calls.push(args); return { events: [], next_cursor: null }; },
+    broker_acknowledge_presence_event: async args => { calls.push(args); return { event_id: args.event_id, acknowledged: true }; },
+  });
+  await f.initialize();
+  assert.deepEqual((await f.send('tools/list')).result.tools.map(tool => tool.name), ['broker_presence_events', 'broker_acknowledge_presence_event']);
+  const result = await f.send('tools/call', { name: 'broker_presence_events', arguments: { limit: 10, cursor: '12' } });
+  assert.equal(result.result.isError, false); assert.deepEqual(calls[0], { limit: 10, cursor: '12' });
+  await f.send('tools/call', { name: 'broker_presence_events' }); assert.deepEqual(calls[1], {});
+  for (const args of [{ limit: 0 }, { limit: 101 }, { limit: 1.5 }, { cursor: '-1' }, { cursor: '1e3' }, { cursor: '00' }, { cursor: '012' }, { cursor: '1'.repeat(17) }, { token: 'not-accepted' }]) {
+    assert.equal((await f.send('tools/call', { name: 'broker_presence_events', arguments: args })).error.code, -32602);
+  }
+  for (const args of [{}, { event_id: 'not-a-uuid' }, { event_id: eventId, recipient_id: eventId }]) {
+    assert.equal((await f.send('tools/call', { name: 'broker_acknowledge_presence_event', arguments: args })).error.code, -32602);
+  }
+  assert.equal(calls.length, 2);
+  const ack = await f.send('tools/call', { name: 'broker_acknowledge_presence_event', arguments: { event_id: eventId } });
+  assert.equal(JSON.parse(ack.result.content[0].text).acknowledged, true);
+  assert.deepEqual(calls[2], { event_id: eventId }); await f.server.close();
+});
+
 test('raw internal errors never leak paths or credentials', async () => {
   const f = fixture({ broker_receive: async () => { throw new Error('secret=private-token /home/private'); } });
   await f.initialize(); const response = await f.send('tools/call', { name: 'broker_receive' });

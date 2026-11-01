@@ -242,6 +242,21 @@ export class BrokerClient {
     return this.request('POST', `/v1/sessions/${this.identity.client_id}/close`, { body: {}, idempotent: true, signal });
   }
 
+  async disconnectSession({ signal } = {}) {
+    return this.request('POST', `/v1/sessions/${this.identity.client_id}/disconnect`, { body: {}, idempotent: true, signal });
+  }
+
+  async presenceEvents(filters = {}, { signal } = {}) {
+    if (Object.keys(filters).some(key => !['limit', 'cursor'].includes(key))) throw new LocalError('invalid_configuration');
+    const query = new URLSearchParams();
+    for (const [key, value] of Object.entries(filters)) query.set(key, String(value));
+    return this.request('GET', `/v1/presence-events${query.size ? `?${query}` : ''}`, { idempotent: true, signal });
+  }
+
+  async acknowledgePresenceEvent(eventId, { signal } = {}) {
+    return this.request('POST', `/v1/presence-events/${validateUuid(eventId)}/ack`, { body: {}, idempotent: true, signal });
+  }
+
   async listClients(filters = {}, { signal } = {}) {
     const allowed = ['connected', 'client_type', 'name', 'project', 'limit', 'cursor'];
     if (Object.keys(filters).some(key => !allowed.includes(key))) throw new LocalError('invalid_configuration');

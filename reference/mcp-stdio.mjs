@@ -20,6 +20,8 @@ export const TOOL_DEFINITIONS = Object.freeze([
   { name: 'broker_resend', description: 'Explicit new delivery of an owned retained message, with a new message ID. May duplicate a prior delivery; never an automatic technical retry.', inputSchema: object({ message_id: uuid, ttl_seconds: { type: 'integer', minimum: 60, maximum: 604800 } }, ['message_id']) },
   { name: 'broker_cancel', description: 'Stop further pending delivery of one owned message. Cannot undo inbox content; inspect uncertainty and cancel_result.', inputSchema: object({ message_id: uuid }, ['message_id']) },
   { name: 'broker_message_status', description: 'Read broker delivery state, never model progress or task completion.', inputSchema: object({ message_id: uuid }, ['message_id']) },
+  { name: 'broker_presence_events', description: 'Poll owned pending-delivery offline notices: bounded metadata only, not message content or reply progress. Default 10; restart later polls without a cursor. No unsolicited wakeup.', inputSchema: object({ limit: { type: 'integer', minimum: 1, maximum: 100, default: 10 }, cursor: { ...text(16), pattern: '^(0|[1-9][0-9]*)$' } }) },
+  { name: 'broker_acknowledge_presence_event', description: 'Idempotently acknowledge one owned offline notice after local event-ID deduplication. Does not acknowledge message delivery or prove model reading.', inputSchema: object({ event_id: uuid }, ['event_id']) },
   { name: 'broker_receive', description: 'Cooperatively peek at the oldest durable AGENT inbox item during this tool call. No unsolicited wakeup or native-consumption receipt; the item remains pending.', inputSchema: object() },
 ]);
 
@@ -38,6 +40,7 @@ function validArguments(value, schema) {
       if (typeof item !== 'string' || !item.isWellFormed() || [...item].length > rule.maxLength) return false;
     }
     if (rule.format === 'uuid' && !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(item)) return false;
+    if (rule.pattern && !new RegExp(rule.pattern).test(item)) return false;
   }
   return true;
 }

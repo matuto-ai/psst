@@ -21,6 +21,13 @@ paste, credential-generator command or client bundle transfer is needed.
 If the administrator password is absent, existing legacy mode remains unchanged;
 there is no anonymous authorization or automatically created administrator.
 
+## Administration pages
+
+The console has separate **Clients & sessions**, **Messages** and **Approvals**
+pages. The session registry distinguishes installation authorization from live
+transport leases; message lists show metadata only until an individual detail is
+opened. See [admin console identities, filters and retention](admin-console.md).
+
 ## Approve once, reuse across sessions
 
 1. Inside the installed native connector, explicitly open setup and enter only the
