@@ -1,5 +1,60 @@
 # Changelog
 
+## 0.5.0 (source candidate; publish separately)
+
+- Split the administrator console into Clients & sessions, Messages and Approvals
+  pages. Show readable client names/types, separate installation/session IDs,
+  transport presence and freshness without exposing credentials. Message lists
+  default to 10 metadata-only rows, newest first, with filters and pagination;
+  original content is fetched only on the explicit message detail page.
+- Add sender-owned outgoing history and explicit original-content retrieval, with
+  bounded, filter-bound pagination and truthful clock-driven expiry status.
+- Add explicit resend as a new message with lineage and distinct cancellation.
+  Same-operation retries retain their identity; an unresolved older operation
+  does not block a distinct new send. Claimed cancellations retain uncertainty,
+  and a late valid completion can still report delivered.
+- Add feature-negotiated, resumable graceful disconnect and timestamped lease
+  presence. Add durable, bounded pending-delivery offline events with deduplication
+  and acknowledgement; reconnect, cancellation, expiry and completion suppress
+  obsolete events. No automatic resend or cancellation occurs.
+- Forward private host shutdown cancellation through networked reference facade
+  operations. Keep administrator authentication, cookie, CSRF and origin checks.
+
+### Upgrade and compatibility
+
+Upgrade the **broker before connectors** that use the new history, resend,
+cancellation or presence APIs. Older connectors retain existing endpoints;
+reference graceful disconnect is feature-gated and falls back to lease expiry
+when unsupported. New endpoints require the upgraded broker: do not assume that
+an older broker supports them, or reinterpret a missing endpoint as success.
+
+Before upgrading, make and verify a private SQLite backup using the existing
+[`scripts/backup.mjs`](docs/operations.md) tool, which includes WAL safely. Preserve
+the existing Compose project, volumes, private configuration, credentials and
+HTTPS proxy. Do not copy only a live SQLite file, delete volumes, or create a new
+installation merely to upgrade. Test rollback against the verified pre-upgrade
+backup; restoring it discards subsequent writes. Do not blindly open upgraded
+storage with an older binary. There is no deployment or configuration change in
+this source preparation.
+
+The `0.5.0` image is a **future release artifact**, not a result of this commit.
+Wait for an explicitly published `v0.5.0` release and its successful release-image
+workflow before selecting `ghcr.io/matuto-ai/psst:0.5.0` in the existing deployment.
+Source, package version, Compose example and release tag must stay aligned.
+
+### Verification boundaries
+
+Broker acceptance is not delivery; `delivered` is a durable adapter-inbox receipt,
+not evidence of model input, reading, a reply or task completion. Connected means
+a valid transport lease at the supplied observation time, not a live process or
+model-availability probe. The new server/reference offline-event API does **not**
+complete an unsolicited native notification consumer. Native event presentation,
+deduplication/ACK and model-input acceptance remain connector-specific verification
+work; do not describe automatic native notifications as delivered by this release.
+
+See [message history](docs/message-history.md), [presence](docs/presence.md) and
+[administrator console](docs/admin-console.md) for contracts and limitations.
+
 ## 0.4.0 (source preparation; publish separately)
 
 - Add native URL-only enrollment requests with administrator approve/deny/revoke

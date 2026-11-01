@@ -1,8 +1,9 @@
 import { createHash, randomBytes, timingSafeEqual, scrypt as scryptCallback } from 'node:crypto';
 import { promisify } from 'node:util';
 import { ApiError } from './protocol.mjs';
+import { AdminData } from './admin-data.mjs';
+import { document, loginPage, sessionsPage, messagesPage, messagePage, approvalsPage, errorPage } from './admin-pages.mjs';
 const scrypt=promisify(scryptCallback),hash=s=>createHash('sha256').update(s).digest('hex');
-const escape=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const token=()=>randomBytes(32).toString('base64url');
 export class AdminUI {
   static async create(options){
@@ -16,6 +17,7 @@ export class AdminUI {
     if(publicOrigin){const u=new URL(publicOrigin);if(u.origin!==publicOrigin||u.username||u.password||u.protocol!==(insecureDevelopment?'http:':'https:'))throw Error('invalid_public_origin');this.publicOrigin=u.origin;}
     this.boot=token();this.loginAttempts=new Map();this.activeLogins=0;
     approval.store.db.exec('DELETE FROM admin_sessions'); // restart requires a fresh login
+    this.data=new AdminData(this.store);
   }
   get store(){return this.approval.store;}
   origin(req){
@@ -43,11 +45,10 @@ export class AdminUI {
   }
   cookie(session){return `psst_admin=${session?.cookie??''}; Path=/admin; HttpOnly; SameSite=Strict; Max-Age=${session?Math.max(0,Math.floor((session.expires-this.store.clock())/1000)):0}${this.insecureDevelopment?'':'; Secure'}`;}
   headers(){return {'Content-Type':'text/html; charset=utf-8','Cache-Control':'no-store','X-Content-Type-Options':'nosniff','Content-Security-Policy':"default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'",'Referrer-Policy':'same-origin'};}
-  html(res,status,content,session){
+  html(res,status,content,session,options={}){
     res.writeHead(status,{...this.headers(),...(session?{'Set-Cookie':this.cookie(session)}:{})});
-    res.end(`<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>Psst administration</title><style>body{font:16px system-ui;max-width:960px;margin:3rem auto;padding:1rem;background:#101820;color:#f3f5f7}input,button{font:inherit;padding:.6rem;margin:.3rem}table{width:100%;border-collapse:collapse}td,th{text-align:left;padding:.8rem;border-bottom:1px solid #53616b}form{display:inline}code{overflow-wrap:anywhere}small{color:#b9c8d3}</style><main><h1>Psst</h1>${content}</main></html>`);
+    res.end(document(content,{...options,csrf:session?.csrf}));
   }
-  form(action,csrf,text){return `<form method="post" action="${action}"><input type="hidden" name="csrf" value="${csrf}"><button>${text}</button></form>`;}
   async input(req){
     if(req.headers['content-encoding']||!/^application\/x-www-form-urlencoded(?:;\s*charset=utf-8)?$/i.test(req.headers['content-type']??''))throw new ApiError(400,'invalid_request');
     if(Number(req.headers['content-length'])>4096)throw new ApiError(413,'payload_too_large');
@@ -66,22 +67,35 @@ export class AdminUI {
   redirect(res,session){res.writeHead(303,{...this.headers(),Location:'/admin','Set-Cookie':this.cookie(session)});res.end();}
   async handle(req,res,url){
     if(!url.pathname.startsWith('/admin'))return false;
-    let page=0;
-    if(url.search){
-      if(req.method!=='GET'||url.pathname!=='/admin'||[...url.searchParams.keys()].some(k=>k!=='page')||url.searchParams.getAll('page').length!==1||!/^(0|[1-9][0-9]?)$/.test(url.searchParams.get('page')))throw new ApiError(400,'invalid_request');
-      page=Number(url.searchParams.get('page'));
-    }
     const session=this.session(req);
-    if(req.method==='GET'&&url.pathname==='/admin'){
-      if(!session?.authenticated){const fresh=session??this.issue(false);this.html(res,200,`<h2>Administrator login</h2><form method="post" action="/admin/login"><input type="hidden" name="csrf" value="${fresh.csrf}"><label>Password <input type="password" name="password" autocomplete="current-password" required maxlength="1024"></label><button>Log in</button></form>`,fresh);return true;}
-      const entries=this.approval.list({offset:page*100,limit:100});
-      const rows=entries.map(row=>{
-        const actions=row.state==='pending'?['approve','deny']:row.state==='approved'?['revoke']:[];
-        const c=row.result?JSON.parse(row.result):null;
-        return `<tr data-request-id="${row.id}"><td><strong>${escape(row.label)}</strong><br><small>${escape(row.type)}</small><br><code>${row.id}</code></td><td>${escape(row.state)}${c?`<br><small>Credential ${escape(c.credential_id)}<br>Expires ${escape(c.expires_at)}</small>`:''}</td><td>${actions.map(a=>this.form(`/admin/requests/${row.id}/${a}`,session.csrf,a)).join('')}</td></tr>`;
-      }).join('');
-      this.html(res,200,`<h2>Installation access</h2><p>Approve only installations you recognize. Names are untrusted labels. Approval does not revoke older installations; revoke them explicitly when appropriate.</p>${this.form('/admin/logout',session.csrf,'Log out')} <a href="/admin">Refresh requests</a><p>Page ${page+1}. ${page?`<a href="/admin?page=${page-1}">Previous</a>`:''} ${entries.length===100&&page<99?`<a href="/admin?page=${page+1}">Next</a>`:''}</p><table><thead><tr><th>Request</th><th>Status</th><th>Action</th></tr></thead><tbody>${rows}</tbody></table>`,session);return true;
+    if(req.method==='GET'){
+      const path=url.pathname,known=path==='/admin'||path==='/admin/approvals'||path==='/admin/sessions'||path==='/admin/messages'||/^\/admin\/messages\/[^/]+$/.test(path);
+      if(!known)throw new ApiError(404,'invalid_request');
+      if(!session?.authenticated){const fresh=session??this.issue(false);this.html(res,200,loginPage(fresh.csrf),fresh);return true;}
+      const active=path.startsWith('/admin/messages')?'messages':path==='/admin/sessions'?'sessions':'approvals';
+      try{
+        let content;
+        if(active==='sessions')content=sessionsPage(this.data.sessions(url.searchParams));
+        else if(path==='/admin/messages')content=messagesPage(this.data.messages(url.searchParams));
+        else if(active==='messages'){
+          if(url.search)throw new ApiError(400,'invalid_request');
+          content=messagePage(this.data.message(path.split('/').at(-1)));
+        }else{
+          let page=0;
+          if(url.search){
+            if([...url.searchParams.keys()].some(k=>k!=='page')||url.searchParams.getAll('page').length!==1||!/^(0|[1-9][0-9]?)$/.test(url.searchParams.get('page')))throw new ApiError(400,'invalid_request');
+            page=Number(url.searchParams.get('page'));
+          }
+          content=approvalsPage(this.approval.list({offset:page*100,limit:100}),page,session,path);
+        }
+        this.html(res,200,content,session,{active,title:`Psst · ${active==='sessions'?'Clients & sessions':active==='messages'?'Messages':'Approvals'}`});
+      }catch(error){
+        if(!(error instanceof ApiError)||![400,404,503].includes(error.status))throw error;
+        this.html(res,error.status,errorPage(error.status,`/admin/${active}`),session,{active,title:'Psst · Request unavailable'});
+      }
+      return true;
     }
+    if(url.search)throw new ApiError(400,'invalid_request');
     if(req.method!=='POST')throw new ApiError(404,'invalid_request');
     // Origin and session are checked before accepting a password/form upload.
     if(req.headers.origin!==this.origin(req)||!session)throw new ApiError(403,'forbidden');
@@ -96,7 +110,7 @@ export class AdminUI {
       this.activeLogins++;let valid;
       try{valid=timingSafeEqual(await scrypt(input.password,this.salt,32),this.verifier);}finally{this.activeLogins--;}
       if(!this.session(req))throw new ApiError(401,'unauthenticated');
-      if(!valid){this.html(res,401,`<h2>Administrator login</h2><p role="alert">Password not accepted. Try again.</p><form method="post" action="/admin/login"><input type="hidden" name="csrf" value="${session.csrf}"><label>Password <input type="password" name="password" autocomplete="current-password" required maxlength="1024"></label><button>Log in</button></form>`,session);return true;}
+      if(!valid){this.html(res,401,loginPage(session.csrf,true),session);return true;}
       this.store.tx(()=>this.store.db.prepare('DELETE FROM admin_sessions WHERE hash=?').run(session.hash));
       this.redirect(res,this.issue(true));return true;
     }

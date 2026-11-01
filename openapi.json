@@ -987,7 +987,7 @@
     "/v1/sessions/{client_id}/close": {
       "post": {
         "operationId": "closeSession",
-        "description": "Irreversible exact-session close; pending broker mail fails, accepted local inbox items are not retracted.",
+        "description": "Irreversible exact-session close; pending broker mail fails, accepted local inbox items are not retracted. Requires a live epoch or the same explicitly resumably disconnected epoch; a replacement attachment fences out that authority. Ordinary expired leases cannot close.",
         "parameters": [
           {
             "$ref": "#/components/parameters/ClientId"
@@ -1517,6 +1517,18 @@
                   "$ref": "#/components/schemas/SendResult"
                 }
               }
+            },
+            "headers": {
+              "Idempotency-Replayed": {
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "true",
+                    "false"
+                  ]
+                },
+                "description": "True identifies replay of the original acceptance, not a new send or current receipt state."
+              }
             }
           },
           "400": {
@@ -1724,6 +1736,279 @@
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/Send"
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "operationId": "listSentHistory",
+        "description": "Owned exact sender outgoing metadata only. Default 10; maximum 100; 32768-byte response cap. Preserve exact filters across cursor pages. 409 history_changed requires restarting the listing. See docs/message-history.md.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ClientId"
+          },
+          {
+            "in": "query",
+            "name": "recipient_id",
+            "schema": {
+              "$ref": "#/components/schemas/Uuid"
+            }
+          },
+          {
+            "in": "query",
+            "name": "status",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "queued",
+                "claimed",
+                "delivered",
+                "expired",
+                "failed",
+                "cancelled"
+              ]
+            }
+          },
+          {
+            "in": "query",
+            "name": "accepted_after",
+            "schema": {
+              "$ref": "#/components/schemas/Timestamp"
+            }
+          },
+          {
+            "in": "query",
+            "name": "accepted_before",
+            "schema": {
+              "$ref": "#/components/schemas/Timestamp"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "type": "integer",
+              "default": 10,
+              "minimum": 1,
+              "maximum": 100
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "schema": {
+              "type": "string",
+              "maxLength": 1024
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HistoryPage"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bounded structured error; inspect code, retryable, effect and action.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Delay in seconds when rate/storage backoff applies."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Bounded structured error; inspect code, retryable, effect and action.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Delay in seconds when rate/storage backoff applies."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Bounded structured error; inspect code, retryable, effect and action.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Delay in seconds when rate/storage backoff applies."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Bounded structured error; inspect code, retryable, effect and action.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Delay in seconds when rate/storage backoff applies."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Bounded structured error; inspect code, retryable, effect and action.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Delay in seconds when rate/storage backoff applies."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "Bounded structured error; inspect code, retryable, effect and action.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Delay in seconds when rate/storage backoff applies."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Bounded structured error; inspect code, retryable, effect and action.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Delay in seconds when rate/storage backoff applies."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Bounded structured error; inspect code, retryable, effect and action.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Delay in seconds when rate/storage backoff applies."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Bounded structured error; inspect code, retryable, effect and action.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Delay in seconds when rate/storage backoff applies."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Bounded structured error; inspect code, retryable, effect and action.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Delay in seconds when rate/storage backoff applies."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Bounded structured error; inspect code, retryable, effect and action.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Delay in seconds when rate/storage backoff applies."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
               }
             }
           }
@@ -3716,6 +4001,1518 @@
           }
         ]
       }
+    },
+    "/v1/messages/{message_id}/content": {
+      "get": {
+        "operationId": "readMessageContent",
+        "description": "Explicit sender-owned original envelope and current receipt; inaccessible/missing IDs return 404, absent retained content 410.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/MessagePath"
+          },
+          {
+            "$ref": "#/components/parameters/ClientId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MessageContent"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bounded structured error; inspect code, retryable, effect and action.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Delay in seconds when rate/storage backoff applies."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Bounded structured error; inspect code, retryable, effect and action.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Delay in seconds when rate/storage backoff applies."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Bounded structured error; inspect code, retryable, effect and action.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Delay in seconds when rate/storage backoff applies."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Bounded structured error; inspect code, retryable, effect and action.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Delay in seconds when rate/storage backoff applies."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Bounded structured error; inspect code, retryable, effect and action.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Delay in seconds when rate/storage backoff applies."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "Bounded structured error; inspect code, retryable, effect and action.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Delay in seconds when rate/storage backoff applies."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Bounded structured error; inspect code, retryable, effect and action.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Delay in seconds when rate/storage backoff applies."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Bounded structured error; inspect code, retryable, effect and action.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Delay in seconds when rate/storage backoff applies."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Bounded structured error; inspect code, retryable, effect and action.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Delay in seconds when rate/storage backoff applies."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Bounded structured error; inspect code, retryable, effect and action.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Delay in seconds when rate/storage backoff applies."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Bounded structured error; inspect code, retryable, effect and action.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Delay in seconds when rate/storage backoff applies."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/messages/{message_id}/resend": {
+      "post": {
+        "operationId": "resendMessage",
+        "description": "Explicit owned retained source resend, one new message ID per internal operation identity; source unchanged and lineage recorded. All retained source states eligible; normal destination/scope/quotas apply.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/MessagePath"
+          },
+          {
+            "$ref": "#/components/parameters/ClientId"
+          },
+          {
+            "$ref": "#/components/parameters/LeaseEpoch"
+          },
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Successful response.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SendResult"
+                }
+              }
+            },
+            "headers": {
+              "Idempotency-Replayed": {
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "true",
+                    "false"
+                  ]
+                },
+                "description": "True identifies replay of the original acceptance, not a new send or current receipt state."
+              }
+            }
+          },
+          "400": {
+            "description": "Bounded structured error; inspect code, retryable, effect and action.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Delay in seconds when rate/storage backoff applies."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Bounded structured error; inspect code, retryable, effect and action.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Delay in seconds when rate/storage backoff applies."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Bounded structured error; inspect code, retryable, effect and action.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Delay in seconds when rate/storage backoff applies."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Bounded structured error; inspect code, retryable, effect and action.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Delay in seconds when rate/storage backoff applies."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Bounded structured error; inspect code, retryable, effect and action.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Delay in seconds when rate/storage backoff applies."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "Bounded structured error; inspect code, retryable, effect and action.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Delay in seconds when rate/storage backoff applies."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Bounded structured error; inspect code, retryable, effect and action.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Delay in seconds when rate/storage backoff applies."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Bounded structured error; inspect code, retryable, effect and action.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Delay in seconds when rate/storage backoff applies."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Bounded structured error; inspect code, retryable, effect and action.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Delay in seconds when rate/storage backoff applies."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Bounded structured error; inspect code, retryable, effect and action.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Delay in seconds when rate/storage backoff applies."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Bounded structured error; inspect code, retryable, effect and action.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Delay in seconds when rate/storage backoff applies."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Resend"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/messages/{message_id}/cancel": {
+      "post": {
+        "operationId": "cancelMessage",
+        "description": "Atomic sender-owned pending cancellation. Outstanding delivery may have occurred; late valid delivered completion may resolve cancelled to delivered. Cannot retract inbox content or model input.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/MessagePath"
+          },
+          {
+            "$ref": "#/components/parameters/ClientId"
+          },
+          {
+            "$ref": "#/components/parameters/LeaseEpoch"
+          }
+        ],
+        "responses": {
+          "400": {
+            "description": "Bounded structured error; inspect code, retryable, effect and action.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Delay in seconds when rate/storage backoff applies."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Bounded structured error; inspect code, retryable, effect and action.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Delay in seconds when rate/storage backoff applies."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Bounded structured error; inspect code, retryable, effect and action.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Delay in seconds when rate/storage backoff applies."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Bounded structured error; inspect code, retryable, effect and action.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Delay in seconds when rate/storage backoff applies."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Bounded structured error; inspect code, retryable, effect and action.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Delay in seconds when rate/storage backoff applies."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "Bounded structured error; inspect code, retryable, effect and action.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Delay in seconds when rate/storage backoff applies."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Bounded structured error; inspect code, retryable, effect and action.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Delay in seconds when rate/storage backoff applies."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Bounded structured error; inspect code, retryable, effect and action.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Delay in seconds when rate/storage backoff applies."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Bounded structured error; inspect code, retryable, effect and action.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Delay in seconds when rate/storage backoff applies."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Bounded structured error; inspect code, retryable, effect and action.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Delay in seconds when rate/storage backoff applies."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Bounded structured error; inspect code, retryable, effect and action.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Delay in seconds when rate/storage backoff applies."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "Successful response.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CancelResult"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Empty"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/sessions": {
+      "get": {
+        "operationId": "adminSessions",
+        "description": "Authenticated session registry: exact client_id, installation_id, client_type and state filters; limit defaults to 10, maximum 100; signed filter-bound cursor. Safe metadata only, no credentials or message bodies. All responses are HTML with no-store and restrictive CSP. An unauthenticated request returns only the login form. See docs/admin-console.md.",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Login form or authenticated HTML page; data requires a valid administrator cookie."
+          },
+          "400": {
+            "description": "Invalid filter, identifier or cursor; no data returned."
+          },
+          "404": {
+            "description": "Message or page unavailable."
+          }
+        }
+      }
+    },
+    "/admin/messages": {
+      "get": {
+        "operationId": "adminMessages",
+        "description": "Authenticated metadata-only message history: sender_id, recipient_id, status, accepted_after/accepted_before UTC filters; newest first, default limit 10 maximum 100 and signed cursor. No body or snippet on this list. All responses are HTML with no-store and restrictive CSP. An unauthenticated request returns only the login form. See docs/admin-console.md.",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Login form or authenticated HTML page; data requires a valid administrator cookie."
+          },
+          "400": {
+            "description": "Invalid filter, identifier or cursor; no data returned."
+          },
+          "404": {
+            "description": "Message or page unavailable."
+          }
+        }
+      }
+    },
+    "/admin/messages/{message_id}": {
+      "get": {
+        "operationId": "adminMessageDetail",
+        "description": "Authenticated explicit individual message read with original escaped content, or retained-content unavailable state. Read-only, no resend/cancel. All responses are HTML with no-store and restrictive CSP. An unauthenticated request returns only the login form. See docs/admin-console.md.",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Login form or authenticated HTML page; data requires a valid administrator cookie."
+          },
+          "400": {
+            "description": "Invalid filter, identifier or cursor; no data returned."
+          },
+          "404": {
+            "description": "Message or page unavailable."
+          }
+        },
+        "parameters": [
+          {
+            "name": "message_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ]
+      }
+    },
+    "/admin/approvals": {
+      "get": {
+        "operationId": "adminApprovals",
+        "description": "Authenticated installation approvals. Preserves existing approval/revocation forms. /admin is a compatibility alias. All responses are HTML with no-store and restrictive CSP. An unauthenticated request returns only the login form. See docs/admin-console.md.",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Login form or authenticated HTML page; data requires a valid administrator cookie."
+          },
+          "400": {
+            "description": "Invalid filter, identifier or cursor; no data returned."
+          },
+          "404": {
+            "description": "Message or page unavailable."
+          }
+        }
+      }
+    },
+    "/v1/sessions/{client_id}/disconnect": {
+      "post": {
+        "operationId": "disconnectSession",
+        "description": "End only the current transport lease, preserving identity and queued mail for resume. Epoch-fenced, repeatable for the same epoch even after expiry; cannot disconnect a replacement epoch. Only disconnecting a live lease establishes later exact-epoch terminal-close authority; already-expired unmarked leases gain none.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ClientId"
+          },
+          {
+            "$ref": "#/components/parameters/LeaseEpoch"
+          },
+          {
+            "$ref": "#/components/parameters/ClientPath"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DisconnectResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bounded structured error; inspect code, retryable, effect and action.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Delay in seconds when rate/storage backoff applies."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Bounded structured error; inspect code, retryable, effect and action.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Delay in seconds when rate/storage backoff applies."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Bounded structured error; inspect code, retryable, effect and action.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Delay in seconds when rate/storage backoff applies."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Bounded structured error; inspect code, retryable, effect and action.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Delay in seconds when rate/storage backoff applies."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Bounded structured error; inspect code, retryable, effect and action.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Delay in seconds when rate/storage backoff applies."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "Bounded structured error; inspect code, retryable, effect and action.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Delay in seconds when rate/storage backoff applies."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Bounded structured error; inspect code, retryable, effect and action.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Delay in seconds when rate/storage backoff applies."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Bounded structured error; inspect code, retryable, effect and action.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Delay in seconds when rate/storage backoff applies."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Bounded structured error; inspect code, retryable, effect and action.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Delay in seconds when rate/storage backoff applies."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Bounded structured error; inspect code, retryable, effect and action.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Delay in seconds when rate/storage backoff applies."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Bounded structured error; inspect code, retryable, effect and action.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Delay in seconds when rate/storage backoff applies."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Empty"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/presence-events": {
+      "get": {
+        "operationId": "listPresenceEvents",
+        "description": "Sender-owned metadata-only pending-delivery offline alerts. No live sender lease required. Default10/max100 events, at most100 examined rows and65536 response bytes; an empty page may still have next_cursor. Re-reading before ACK returns the same event ID. Reconnect/completion/TTL suppress obsolete events; not a reply timeout. capacity_limited means the10000-row dedupe store is full and new events may be deferred without changing mail.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ClientId"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 10
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "pattern": "^(0|[1-9][0-9]*)$",
+              "maxLength": 16
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PresenceEvents"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bounded structured error; inspect code, retryable, effect and action.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Delay in seconds when rate/storage backoff applies."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Bounded structured error; inspect code, retryable, effect and action.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Delay in seconds when rate/storage backoff applies."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Bounded structured error; inspect code, retryable, effect and action.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Delay in seconds when rate/storage backoff applies."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Bounded structured error; inspect code, retryable, effect and action.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Delay in seconds when rate/storage backoff applies."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Bounded structured error; inspect code, retryable, effect and action.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Delay in seconds when rate/storage backoff applies."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "Bounded structured error; inspect code, retryable, effect and action.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Delay in seconds when rate/storage backoff applies."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Bounded structured error; inspect code, retryable, effect and action.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Delay in seconds when rate/storage backoff applies."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Bounded structured error; inspect code, retryable, effect and action.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Delay in seconds when rate/storage backoff applies."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Bounded structured error; inspect code, retryable, effect and action.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Delay in seconds when rate/storage backoff applies."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Bounded structured error; inspect code, retryable, effect and action.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Delay in seconds when rate/storage backoff applies."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Bounded structured error; inspect code, retryable, effect and action.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Delay in seconds when rate/storage backoff applies."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/presence-events/{event_id}/ack": {
+      "post": {
+        "operationId": "acknowledgePresenceEvent",
+        "description": "Idempotent owner/scope-checked acknowledgement of a transport notice, not a message receipt or model-processing confirmation. No live sender lease required. Ended/collected episodes may return404.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ClientId"
+          },
+          {
+            "name": "event_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Empty"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful response.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PresenceAcknowledgement"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bounded structured error; inspect code, retryable, effect and action.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Delay in seconds when rate/storage backoff applies."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Bounded structured error; inspect code, retryable, effect and action.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Delay in seconds when rate/storage backoff applies."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Bounded structured error; inspect code, retryable, effect and action.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Delay in seconds when rate/storage backoff applies."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Bounded structured error; inspect code, retryable, effect and action.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Delay in seconds when rate/storage backoff applies."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Bounded structured error; inspect code, retryable, effect and action.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Delay in seconds when rate/storage backoff applies."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "Bounded structured error; inspect code, retryable, effect and action.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Delay in seconds when rate/storage backoff applies."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Bounded structured error; inspect code, retryable, effect and action.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Delay in seconds when rate/storage backoff applies."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Bounded structured error; inspect code, retryable, effect and action.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Delay in seconds when rate/storage backoff applies."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Bounded structured error; inspect code, retryable, effect and action.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Delay in seconds when rate/storage backoff applies."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Bounded structured error; inspect code, retryable, effect and action.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Delay in seconds when rate/storage backoff applies."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Bounded structured error; inspect code, retryable, effect and action.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Delay in seconds when rate/storage backoff applies."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -4230,6 +6027,17 @@
             "type": "integer",
             "minimum": 1,
             "maximum": 9007199254740991
+          },
+          "offline_notice_seconds": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 604800
+          },
+          "resumable_disconnect": {
+            "type": "boolean"
+          },
+          "presence_events": {
+            "type": "boolean"
           }
         },
         "required": [
@@ -4240,7 +6048,7 @@
           "registration_retry_seconds",
           "send_retry_seconds"
         ],
-        "description": "Effective configurable values. Lease is at least three heartbeat intervals. Retention after terminal is never earlier than TTL plus send retry window. Clients stop blind send retries at the advertised deadline."
+        "description": "Effective configurable values. Lease is at least three heartbeat intervals. Retention after terminal is never earlier than TTL plus send retry window. Clients stop blind send retries at the advertised deadline. Optional presence feature flags advertise resumable disconnect and durable presence events; old brokers may omit them. Offline notice grace starts at the last heartbeat, separately from lease expiry."
       },
       "RegistrationResult": {
         "type": "object",
@@ -4325,6 +6133,20 @@
           },
           "connected": {
             "type": "boolean"
+          },
+          "presence_state": {
+            "type": "string",
+            "enum": [
+              "connected",
+              "disconnected",
+              "closed"
+            ]
+          },
+          "last_heartbeat_at": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "observed_at": {
+            "$ref": "#/components/schemas/Timestamp"
           }
         },
         "required": [
@@ -4340,8 +6162,12 @@
           "metadata",
           "capabilities",
           "closed",
-          "connected"
-        ]
+          "connected",
+          "presence_state",
+          "last_heartbeat_at",
+          "observed_at"
+        ],
+        "description": "Presence is a server lease observation, not a process probe or proof of model responsiveness. Historical rows may remain visible."
       },
       "DiscoveryClient": {
         "type": "object",
@@ -4392,6 +6218,17 @@
           },
           "last_heartbeat_at": {
             "$ref": "#/components/schemas/Timestamp"
+          },
+          "presence_state": {
+            "type": "string",
+            "enum": [
+              "connected",
+              "disconnected",
+              "closed"
+            ]
+          },
+          "observed_at": {
+            "$ref": "#/components/schemas/Timestamp"
           }
         },
         "required": [
@@ -4404,8 +6241,11 @@
           "capabilities",
           "connected",
           "lease_expires_at",
-          "last_heartbeat_at"
-        ]
+          "last_heartbeat_at",
+          "presence_state",
+          "observed_at"
+        ],
+        "description": "Presence is a server lease observation, not a process probe or proof of model responsiveness. Historical rows may remain visible."
       },
       "Discovery": {
         "type": "object",
@@ -4538,6 +6378,9 @@
           },
           "server_time": {
             "$ref": "#/components/schemas/Timestamp"
+          },
+          "resent_from_message_id": {
+            "$ref": "#/components/schemas/Uuid"
           }
         },
         "required": [
@@ -4573,7 +6416,8 @@
               "claimed",
               "delivered",
               "expired",
-              "failed"
+              "failed",
+              "cancelled"
             ]
           },
           "attempt_count": {
@@ -4632,6 +6476,12 @@
             ]
           },
           "server_time": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "resent_from_message_id": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "cancelled_at": {
             "$ref": "#/components/schemas/Timestamp"
           }
         },
@@ -5060,6 +6910,575 @@
             "$ref": "#/components/schemas/EnrollmentResult"
           }
         }
+      },
+      "HistoryItem": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "message_id": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "recipient_id": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "recipient_sequence": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          },
+          "delivery_state": {
+            "type": "string",
+            "enum": [
+              "queued",
+              "claimed",
+              "delivered",
+              "expired",
+              "failed",
+              "cancelled"
+            ]
+          },
+          "attempt_count": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 64
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "delivery_uncertain": {
+            "type": "boolean"
+          },
+          "accepted_at": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "expires_at": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "claimed_at": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Timestamp"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "delivered_at": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Timestamp"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "terminal_at": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Timestamp"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "server_time": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "sender_id": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "resent_from_message_id": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "cancelled_at": {
+            "$ref": "#/components/schemas/Timestamp"
+          }
+        },
+        "required": [
+          "message_id",
+          "recipient_id",
+          "recipient_sequence",
+          "delivery_state",
+          "attempt_count",
+          "reason",
+          "delivery_uncertain",
+          "accepted_at",
+          "expires_at",
+          "claimed_at",
+          "delivered_at",
+          "terminal_at",
+          "server_time",
+          "sender_id"
+        ],
+        "description": "Delivered means durable adapter inbox acceptance, never native model input or task completion. A negative terminal receipt with delivery_uncertain=true cannot prove absence from the inbox."
+      },
+      "MessageContent": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "message_id": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "recipient_id": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "recipient_sequence": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          },
+          "delivery_state": {
+            "type": "string",
+            "enum": [
+              "queued",
+              "claimed",
+              "delivered",
+              "expired",
+              "failed",
+              "cancelled"
+            ]
+          },
+          "attempt_count": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 64
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "delivery_uncertain": {
+            "type": "boolean"
+          },
+          "accepted_at": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "expires_at": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "claimed_at": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Timestamp"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "delivered_at": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Timestamp"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "terminal_at": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Timestamp"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "server_time": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "sender_id": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "envelope": {
+            "$ref": "#/components/schemas/Envelope"
+          },
+          "resent_from_message_id": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "cancelled_at": {
+            "$ref": "#/components/schemas/Timestamp"
+          }
+        },
+        "required": [
+          "message_id",
+          "recipient_id",
+          "recipient_sequence",
+          "delivery_state",
+          "attempt_count",
+          "reason",
+          "delivery_uncertain",
+          "accepted_at",
+          "expires_at",
+          "claimed_at",
+          "delivered_at",
+          "terminal_at",
+          "server_time",
+          "sender_id",
+          "envelope"
+        ],
+        "description": "Delivered means durable adapter inbox acceptance, never native model input or task completion. A negative terminal receipt with delivery_uncertain=true cannot prove absence from the inbox."
+      },
+      "HistoryPage": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "messages": {
+            "type": "array",
+            "maxItems": 100,
+            "items": {
+              "$ref": "#/components/schemas/HistoryItem"
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 1024
+          },
+          "snapshot_at": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "server_time": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "retention_changed": {
+            "type": "boolean",
+            "description": "Retention deleted records since the first page; those records may be absent."
+          }
+        },
+        "required": [
+          "messages",
+          "next_cursor",
+          "snapshot_at",
+          "server_time",
+          "retention_changed"
+        ],
+        "description": "Default limit 10; 32768-byte cap; newest accepted_at/message_id first; insertion snapshot, live receipt state. Status-filter membership changes return history_changed. Purge is reported by retention_changed. At most 1000 candidate rows per page."
+      },
+      "Resend": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "ttl_seconds": {
+            "type": "integer",
+            "minimum": 60,
+            "maximum": 604800,
+            "default": 86400
+          }
+        }
+      },
+      "CancelResult": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "message_id": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "recipient_id": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "recipient_sequence": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          },
+          "delivery_state": {
+            "type": "string",
+            "enum": [
+              "queued",
+              "claimed",
+              "delivered",
+              "expired",
+              "failed",
+              "cancelled"
+            ]
+          },
+          "attempt_count": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 64
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "delivery_uncertain": {
+            "type": "boolean"
+          },
+          "accepted_at": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "expires_at": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "claimed_at": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Timestamp"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "delivered_at": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Timestamp"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "terminal_at": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Timestamp"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "server_time": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "resent_from_message_id": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "cancelled_at": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "cancel_result": {
+            "enum": [
+              "cancelled",
+              "already_delivered",
+              "already_terminal"
+            ]
+          },
+          "further_delivery_stopped": {
+            "type": "boolean",
+            "const": true
+          },
+          "delivery_may_have_occurred": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "message_id",
+          "recipient_id",
+          "recipient_sequence",
+          "delivery_state",
+          "attempt_count",
+          "reason",
+          "delivery_uncertain",
+          "accepted_at",
+          "expires_at",
+          "claimed_at",
+          "delivered_at",
+          "terminal_at",
+          "server_time",
+          "cancel_result",
+          "further_delivery_stopped",
+          "delivery_may_have_occurred"
+        ],
+        "description": "Delivered means durable adapter inbox acceptance, never native model input or task completion. A negative terminal receipt with delivery_uncertain=true cannot prove absence from the inbox."
+      },
+      "DisconnectResult": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "client_id": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "lease_epoch": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "connected": {
+            "const": false
+          },
+          "presence_state": {
+            "type": "string",
+            "enum": [
+              "connected",
+              "disconnected",
+              "closed"
+            ]
+          },
+          "last_heartbeat_at": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "lease_expires_at": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "observed_at": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "server_time": {
+            "$ref": "#/components/schemas/Timestamp"
+          }
+        },
+        "required": [
+          "client_id",
+          "lease_epoch",
+          "connected",
+          "presence_state",
+          "last_heartbeat_at",
+          "lease_expires_at",
+          "observed_at",
+          "server_time"
+        ]
+      },
+      "PresenceMessage": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "message_id": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "delivery_state": {
+            "type": "string",
+            "enum": [
+              "queued",
+              "claimed"
+            ]
+          },
+          "delivery_uncertain": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "message_id",
+          "delivery_state",
+          "delivery_uncertain"
+        ]
+      },
+      "PresenceEvent": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "event_id": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "type": {
+            "const": "recipient_offline"
+          },
+          "recipient_id": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "last_heartbeat_at": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "created_at": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "observed_at": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "presence_state": {
+            "const": "disconnected"
+          },
+          "messages": {
+            "type": "array",
+            "maxItems": 10,
+            "items": {
+              "$ref": "#/components/schemas/PresenceMessage"
+            }
+          },
+          "has_more_messages": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "event_id",
+          "type",
+          "recipient_id",
+          "last_heartbeat_at",
+          "created_at",
+          "observed_at",
+          "presence_state",
+          "messages",
+          "has_more_messages"
+        ]
+      },
+      "PresenceEvents": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "events": {
+            "type": "array",
+            "maxItems": 100,
+            "items": {
+              "$ref": "#/components/schemas/PresenceEvent"
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "pattern": "^(0|[1-9][0-9]*)$"
+          },
+          "server_time": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "capacity_limited": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "events",
+          "next_cursor",
+          "server_time",
+          "capacity_limited"
+        ]
+      },
+      "PresenceAcknowledgement": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "event_id": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "acknowledged": {
+            "const": true
+          }
+        },
+        "required": [
+          "event_id",
+          "acknowledged"
+        ]
       }
     }
   }

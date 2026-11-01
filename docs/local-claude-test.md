@@ -92,7 +92,8 @@ Finally ask **A**:
 The native names may be displayed with Claude's `mcp__lan_broker__` prefix. If the
 tools are absent or a lifecycle/permission error occurs, stop and share only the
 bounded diagnostic/version, **not token/config/auth files**. Do not automatically
-repeat an uncertain send under a new key; retain its returned `send_key`/message ID.
+repeat an uncertain send as a fresh intent; let the adapter recover its internal
+operation identity and retain any returned message ID.
 
 ## 3. What counts as success
 

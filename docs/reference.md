@@ -54,6 +54,14 @@ shutdown callers must await completion before closing the inbox. Session close i
 still best effort: unknown network/storage outcomes never justify guessing an epoch
 or adopting another connection; lease expiry is the fallback.
 
+For resumable shutdown, `stop({closeSession:false})` best-effort disconnects the
+final attachment when the broker advertises `resumable_disconnect`; it preserves
+the identity and mailbox. A later explicit terminal stop can close that same
+disconnected epoch, but never a replacement. See [presence](presence.md) for the
+bounded metadata-only `broker_presence_events` and
+`broker_acknowledge_presence_event` cooperative MCP tools. These do not enable
+unsolicited native model-input injection.
+
 ## Configuration and transport
 
 `Inbox` requires `directory` and `identity`. The directory is local, private
@@ -144,8 +152,9 @@ readable through `messageStatus` after lease expiry when authorization remains.
 Use `prepareSend(request)` to durably obtain a key, then `sendPrepared(key)`. A
 retry reuses the original normalized body and metadata snapshot; changed payload
 with the same key conflicts. `unresolvedSends()` exposes bounded local recovery
-entries without message bodies. The native send tool returns `send_key` on success
-or an uncertain error so its caller can preserve it. Never create a replacement
+entries without message bodies. Native hosts preserve tool-call identity internally;
+model-facing schemas/results never expose `send_key`. Bounded `recoverOutgoing`
+reconciles persisted unknown operations after exact-session attachment. Never create a replacement
 key merely because a network response was lost. After the advertised retry window,
 automatic replay stops; reconcile a known message ID or the original operation.
 
@@ -240,3 +249,11 @@ absolute request deadlines, stable send keys and real broker HTTP integration.
 MCP tests cover handshake, argument/frame bounds, lifecycle, safe output and the
 non-consuming cooperative boundary. Real CLI safety, container deployment and
 two-host LAN operation require their separately recorded integration evidence.
+
+## Outgoing message history
+
+See [owned outgoing history](message-history.md) for bounded metadata listing and explicit sender-owned content retrieval.
+
+## Hidden operation identity and lifecycle
+
+See [message lifecycle](message-lifecycle.md). Native hosts pass stable tool-call context internally; model schemas never require technical keys. Use `prepareResend` / `resendPrepared`, `cancelMessage` and bounded `recoverOutgoing` with the exact surviving session.

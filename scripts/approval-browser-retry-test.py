@@ -2,12 +2,36 @@
 import importlib.util
 import pathlib
 import unittest
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 spec = importlib.util.spec_from_file_location("approval_browser", pathlib.Path(__file__).with_name("approval-browser-smoke.py"))
 module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(module)
 URL = "https://127.0.0.1:12345/admin"
+
+
+class ApprovalStateTests(unittest.TestCase):
+    def test_scopes_assertion_to_exact_request_status_badge(self):
+        page = Mock()
+        with patch.object(module, "expect") as expect:
+            module.assert_approval_state(page, "synthetic-request", "approved")
+        page.locator.assert_called_once_with('[data-request-id="synthetic-request"]')
+        page.locator.return_value.locator.assert_called_once_with('.badge')
+        expect.assert_called_once_with(page.locator.return_value.locator.return_value)
+        pattern = expect.return_value.to_have_text.call_args.args[0]
+        for text in ["approved", "Approved", " APPROVED "]:
+            self.assertIsNotNone(pattern.fullmatch(text))
+        for text in ["pending", "denied", "unapproved", "approved-looking client"]:
+            self.assertIsNone(pattern.fullmatch(text))
+
+    def test_each_final_state_remains_distinct(self):
+        for state in ["approved", "denied", "revoked"]:
+            with self.subTest(state=state), patch.object(module, "expect") as expect:
+                module.assert_approval_state(Mock(), "synthetic-request", state)
+                pattern = expect.return_value.to_have_text.call_args.args[0]
+                self.assertIsNotNone(pattern.fullmatch(state.capitalize()))
+                for other in {"approved", "denied", "revoked", "pending"} - {state}:
+                    self.assertIsNone(pattern.fullmatch(other))
 
 
 class InitialNavigationTests(unittest.TestCase):
