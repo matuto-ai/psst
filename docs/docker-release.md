@@ -2,17 +2,25 @@
 
 The normal server package is a **Linux/amd64** image, with Node 24.19.0 and SQLite 3.53.3 inside it. No host Node installation, client launcher, generated certificate or generated credential is needed to start it.
 
+## 0.5.0 source candidate
+
+This branch prepares source and aligned version metadata only. It does **not**
+publish a tag, GitHub Release or image, and does not deploy a broker. Do not pull
+the version below until its release workflow has actually succeeded. Review the
+[upgrade and compatibility notes](../CHANGELOG.md#upgrade-and-compatibility)
+before updating an existing installation.
+
 ## Pull and run
 
-**The image is not published by a source-code push.** Use these commands after GitHub Release `v0.4.0` has completed its Release image workflow successfully. Versioned image: `ghcr.io/matuto-ai/psst:0.4.0`.
+**The image is not published by a source-code push.** Use these commands after GitHub Release `v0.5.0` has completed its Release image workflow successfully. Versioned image: `ghcr.io/matuto-ai/psst:0.5.0`.
 
 ```sh
-docker pull ghcr.io/matuto-ai/psst:0.4.0
+docker pull ghcr.io/matuto-ai/psst:0.5.0
 docker run -d --name ai-agent-msg-broker --restart unless-stopped \
   --read-only --cap-drop ALL --security-opt no-new-privileges \
   -p 127.0.0.1:8787:8787 \
   -v ai-agent-msg-broker-data:/data \
-  ghcr.io/matuto-ai/psst:0.4.0
+  ghcr.io/matuto-ai/psst:0.5.0
 curl --fail --show-error --max-time 5 http://127.0.0.1:8787/healthz
 ```
 
@@ -44,7 +52,7 @@ To enroll adapters later, mount a dedicated private directory containing `config
 ## Publish a release — operator action
 
 1. Review and merge the release preparation PR. Select that exact reviewed commit for the release.
-2. Keep `package.json` version and release tag aligned: current version `0.4.0` requires tag **`v0.4.0`**. For another version, update `package.json`, test and commit it first.
+2. Keep `package.json` version and release tag aligned: current version `0.5.0` requires tag **`v0.5.0`**. For another version, update `package.json`, test and commit it first.
 3. In GitHub, publish the release at the reviewed commit. Publishing, not merely saving a draft or pushing a tag, triggers **Release image**.
 4. The workflow runs **all** ordinary CI jobs against the immutable release event commit: full test suite, syntax, Docker, rootless Podman, copied-runtime and connectivity checks. Only after success does it build/smoke/push the Linux/amd64 image using the repository's short-lived `GITHUB_TOKEN` with `packages: write`. No registry secret setup is required for this workflow.
 5. Stable releases publish `:VERSION` and `:latest`; prereleases publish only `:VERSION`. The run summary records pull command and image digest. Prefer a version/digest for deployment. Published version tags should not be reused for different source.
@@ -67,4 +75,17 @@ CI additionally exercises **ordinary `-p` host-to-container connectivity**, miss
 
 ## Enroll native clients after the connectivity check
 
-Once HTTPS health succeeds from each client sandbox, use the [offline initial-enrollment guide](enrollment.md). It stages four separate credentials and native client bundles without changing the existing database, image, ports, or proxy. Creating and activating those credentials remains an explicit operator step.
+Once HTTPS health succeeds from each client sandbox, use the normal
+[native URL-only setup and approval flow](approval-operator.md). Install a
+compatible native connector, explicitly open its setup, and enter the broker's
+HTTPS URL. In the broker's **Approvals** page, an administrator matches the request
+ID and client type and explicitly approves or denies that installation. The
+connector saves its private authorization locally for later sessions; no manual
+credential file or bundle transfer is part of this normal flow. Merely installing
+a connector or knowing the URL never creates messaging authorization.
+
+The [offline initial-enrollment guide](enrollment.md) remains an **optional,
+advanced legacy path**, not a prerequisite for native URL-only setup. It stages
+separate credentials/bundles for deliberately selected legacy integrations;
+creating and activating them still requires an explicit operator decision. Keep
+existing working authorization and persistent client state when upgrading.
