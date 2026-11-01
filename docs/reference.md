@@ -144,8 +144,9 @@ readable through `messageStatus` after lease expiry when authorization remains.
 Use `prepareSend(request)` to durably obtain a key, then `sendPrepared(key)`. A
 retry reuses the original normalized body and metadata snapshot; changed payload
 with the same key conflicts. `unresolvedSends()` exposes bounded local recovery
-entries without message bodies. The native send tool returns `send_key` on success
-or an uncertain error so its caller can preserve it. Never create a replacement
+entries without message bodies. Native hosts preserve tool-call identity internally;
+model-facing schemas/results never expose `send_key`. Bounded `recoverOutgoing`
+reconciles persisted unknown operations after exact-session attachment. Never create a replacement
 key merely because a network response was lost. After the advertised retry window,
 automatic replay stops; reconcile a known message ID or the original operation.
 
@@ -244,3 +245,7 @@ two-host LAN operation require their separately recorded integration evidence.
 ## Outgoing message history
 
 See [owned outgoing history](message-history.md) for bounded metadata listing and explicit sender-owned content retrieval.
+
+## Hidden operation identity and lifecycle
+
+See [message lifecycle](message-lifecycle.md). Native hosts pass stable tool-call context internally; model schemas never require technical keys. Use `prepareResend` / `resendPrepared`, `cancelMessage` and bounded `recoverOutgoing` with the exact surviving session.

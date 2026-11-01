@@ -17,6 +17,7 @@ const ERROR_TEXT = Object.freeze({
   forbidden: ['This operation is not authorized.', 'Check the enrolled adapter permissions.'],
   recipient_not_found: ['The recipient is not available.', 'Select an exact authorized client ID from discovery.'],
   message_not_found: ['The message is not available.', 'Use a message ID owned by this principal.'],
+  retry_window_elapsed: ['The operation recovery record has expired.', 'Reconcile the existing receipt; only an explicit new send or resend may create another delivery.'],
   history_changed: ['History changed while paging.', 'Restart the listing without a cursor; no continuation was silently skipped.'],
   content_unavailable: ['The original content is no longer retained.', 'Use the receipt; unavailable content cannot be reconstructed.'],
   identity_conflict: ['The session identity conflicts with an existing registration.', 'Do not adopt another session; verify the local session identity.'],
@@ -298,4 +299,20 @@ export function canonical(value) {
 
 export function digest(value) {
   return createHash('sha256').update(canonical(value), 'utf8').digest('hex');
+}
+
+export function validateResend(value, { limits = {} } = {}) {
+  object(value, ['ttl_seconds'], [], 'body');
+  const merged = { ...DEFAULTS, ...limits };
+  return { ttl_seconds: value.ttl_seconds === undefined ? merged.default_ttl_seconds : integer(value.ttl_seconds, Math.max(60, merged.min_ttl_seconds), Math.min(604800, merged.max_ttl_seconds), 'body.ttl_seconds') };
+}
+
+/** New internal keys carry a timestamp; legacy keys retain their bounded v1 guarantee. */
+export function validateOperationTime(key, now, retryWindowSeconds) {
+  if(!key.startsWith('op_'))return;
+  const match=/^op_([0-9]{13})_([A-Za-z0-9_-]{16,96})$/.exec(key);
+  if(!match)throw new ApiError(400,'invalid_request','headers.Idempotency-Key');
+  const started=Number(match[1]);
+  if(started>now+300000)throw new ApiError(400,'invalid_request','headers.Idempotency-Key');
+  if(now-started>=retryWindowSeconds*1000)throw new ApiError(410,'retry_window_elapsed','headers.Idempotency-Key');
 }

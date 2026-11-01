@@ -112,7 +112,13 @@ export function createBrokerServer({ store, auth, enrollment, approval, admin, r
         if(action==='metadata'&&req.method==='PATCH')return reply(res,200,store.metadata(principal,id,epoch,b));
         if(action==='close'&&req.method==='POST'){validateEmpty(b);return reply(res,200,store.closeSession(principal,id,epoch));}
       }
-      if(url.pathname==='/v1/messages'&&req.method==='POST')return reply(res,202,store.send(principal,id,epoch,req.headers['idempotency-key'],await body(req)));
+      const lifecycle=/^\/v1\/messages\/([^/]+)\/(resend|cancel)$/.exec(url.pathname);
+      if(lifecycle&&req.method==='POST'){
+        const message=validateUuid(lifecycle[1],'path.message_id'),b=await body(req);
+        if(lifecycle[2]==='resend'){const result=store.resend(principal,id,epoch,req.headers['idempotency-key'],message,b);return reply(res,202,result,{'Idempotency-Replayed':String(!!result._replayed)});}
+        validateEmpty(b);return reply(res,200,store.cancel(principal,id,epoch,message));
+      }
+      if(url.pathname==='/v1/messages'&&req.method==='POST'){const result=store.send(principal,id,epoch,req.headers['idempotency-key'],await body(req));return reply(res,202,result,{'Idempotency-Replayed':String(!!result._replayed)});}
       if(url.pathname==='/v1/mailbox/claim'&&req.method==='POST'){
         const b=validateClaim(await body(req),{limits:store.limits}),key=req.headers['idempotency-key'],pollKey=`${id}:${epoch}`;
         if(polls.has(pollKey))throw new ApiError(409,'claim_conflict');

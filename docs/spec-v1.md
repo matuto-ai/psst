@@ -475,3 +475,7 @@ No private network address, credential, native transcript, or personal workspace
 ## Outgoing message history
 
 See [owned outgoing history](message-history.md) for bounded metadata listing and explicit sender-owned content retrieval.
+
+## Explicit resend and cancellation
+
+See [message lifecycle](message-lifecycle.md) for internal recovery, bounded retry windows, explicit resend, cancellation races and compatibility.

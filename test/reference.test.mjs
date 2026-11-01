@@ -461,11 +461,13 @@ test('tool send retries must preserve recipient/content and do not refresh histo
   await f.request('/v1/sessions', { token: f.b.token, method: 'POST', body: registration });
   let observations = 0;
   const tools = createTools({ client: sender, observeMetadata: () => { observations++; return { name: 'observed' }; } });
-  const first = await tools.broker_send({ recipient_id: b.identity.client_id, text: 'same' });
+  const context={operationId:'native-session:call-1'};
+  const first = await tools.broker_send({ recipient_id: b.identity.client_id, text: 'same' },context);
   assert.ok(first.message_id);
-  const again = await tools.broker_send({ recipient_id: b.identity.client_id, text: 'same', send_key: first.send_key });
-  assert.equal(again.message_id, first.message_id); assert.equal(observations, 1);
-  const changed = await tools.broker_send({ recipient_id: b.identity.client_id, text: 'changed', send_key: first.send_key });
+  const again = await tools.broker_send({ recipient_id: b.identity.client_id, text: 'same' },context);
+  assert.equal(again.message_id, first.message_id); assert.equal(observations, 1);assert.equal(again.acceptance_replayed,true);assert.ok(!('send_key'in first));
+  const distinct=await tools.broker_send({recipient_id:b.identity.client_id,text:'same'},{operationId:'native-session:call-2'});assert.notEqual(distinct.message_id,first.message_id);
+  const changed = await tools.broker_send({ recipient_id: b.identity.client_id, text: 'changed' },context);
   assert.equal(changed.error.code, 'send_conflict');
 });
 
@@ -554,4 +556,168 @@ test('same send key is retained across lost HTTP response and Retry-After; remot
   await client.sendPrepared(key); assert.deepEqual(keys, [key, key, key]); assert.ok(sleeps[1] >= 2000);
   const error = new BrokerError(429, { error: { code: 'rate_limited', message: secret, details: secret, retryable: true, effect: 'not_applied' } });
   assert.ok(!JSON.stringify(error.toJSON()).includes(secret));
+});
+
+test('resend client and host-operation facade persist intent, recover lost results, keep keys hidden and honor server default TTL',async t=>{
+ const f=await httpFixture(t,{limits:{default_ttl_seconds:120}}),a=local(t),b=local(t);
+ const tokenFile=join(a.directory,'token');writeFileSync(tokenFile,f.a.token,{mode:0o600});
+ const make=()=>new BrokerClient({url:f.base,tokenFile,insecureDevelopment:true,inbox:a.inbox,now:()=>f.now});
+ let client=make();await client.register(metadata);
+ await f.request('/v1/sessions',{token:f.b.token,method:'POST',body:{protocol_version:'1',...b.identity,connection_id:randomUUID(),previous_epoch:0,metadata,capabilities:{protocol_version:'1',adapter_version:'0.1.0',client_type:'pi',receive_enabled:true,durable_inbox:true}}});
+ const tools=createTools({client});
+ const source=await tools.broker_send({recipient_id:b.identity.client_id,text:'same',ttl_seconds:120},{operationId:'host:first'});
+ const key=client.prepareResend(source.message_id),pending=a.inbox.outgoing(key);
+ assert.deepEqual(pending.request,{message_id:source.message_id});
+ // Simulate accepted HTTP result lost before the local ACK journal.
+ const accepted=f.store.resend(f.a.entry,a.identity.client_id,1,key,source.message_id,{});
+ a.reopen();client=make();
+ const recovered=await client.recoverOutgoing();assert.equal(recovered.length,1);assert.equal(recovered[0].result.message_id,accepted.message_id);assert.equal(recovered[0].result.acceptance_replayed,true);
+ assert.ok(!JSON.stringify(recovered).includes(key));assert.ok(!JSON.stringify(recovered).includes('send_key'));
+ assert.equal(Date.parse(accepted.expires_at)-Date.parse(accepted.server_time),120000);
+ const facade=createTools({client}),resent=await facade.broker_resend({message_id:source.message_id},{operationId:'host:resend'});
+ const replay=await facade.broker_resend({message_id:source.message_id},{operationId:'host:resend'});assert.equal(replay.message_id,resent.message_id);assert.ok(!('send_key'in resent));
+ assert.equal((await facade.broker_cancel({message_id:resent.message_id})).delivery_state,'cancelled');
+ assert.equal((await facade.broker_message_content({message_id:source.message_id})).envelope.content.text,'same');
+ assert.equal((await facade.broker_sent_history({limit:1})).messages.length,1);
+});
+
+test('expired collected timestamped local operations cannot silently send again',t=>{
+ const f=local(t),request={recipient_id:randomUUID(),content:{type:'text/plain',text:'same'}};
+ const key=f.inbox.prepareSend(request,{retryWindowSeconds:1});f.inbox.recordSendResult(key,{message_id:randomUUID()});f.advance(1001);f.inbox.collect();f.reopen();
+ assert.equal(f.inbox.outgoing(key),null);
+ assert.throws(()=>f.inbox.prepareSend(request,{key,retryWindowSeconds:1}),{code:'retry_window_elapsed'});
+ assert.throws(()=>f.inbox.prepareSend({...request,content:{type:'text/plain',text:'changed'}},{key,retryWindowSeconds:1}),{code:'retry_window_elapsed'});
+});
+
+test('an unknown operation never blocks a distinct explicit host intent or silently changes its own key',async t=>{
+ const f=local(t);let sends=0;const keys=[];
+ const client={inbox:f.inbox,prepareSend:(request,options)=>f.inbox.prepareSend(request,options),sendPrepared:async key=>{sends++;keys.push(key);if(sends===1)throw new LocalError('request_failed',{effect:'unknown'});const result={message_id:randomUUID()};f.inbox.recordSendResult(key,result);return {...result,send_key:key};}};
+ const tools=createTools({client}),args={recipient_id:randomUUID(),text:'opaque'},context={operationId:'session:unknown'};
+ assert.equal((await tools.broker_send(args,context)).error.code,'request_failed');
+ const distinct=await tools.broker_send({...args,recipient_id:randomUUID()},{operationId:'session:fresh'});assert.ok(distinct.message_id);assert.equal(sends,2);
+ assert.equal(f.inbox.unresolvedSends().length,1,'unknown A remains recorded after B succeeds');
+ const recovered=await tools.broker_send(args,context);assert.ok(recovered.message_id);assert.ok(!('send_key'in recovered));
+ assert.equal(keys[0],keys[2]);assert.notEqual(keys[0],keys[1]);
+});
+
+test('definite rejection settles only a wholly known-not-applied operation, never a prior unknown attempt',async t=>{
+ const f=local(t),tokenFile=join(f.directory,'token');writeFileSync(tokenFile,randomBytes(32).toString('base64url'),{mode:0o600});
+ const client=new BrokerClient({url:'http://127.0.0.1/',insecureDevelopment:true,tokenFile,inbox:f.inbox,now:()=>epoch});
+ const request={recipient_id:randomUUID(),content:{type:'text/plain',text:'intent'}};
+ const rejected=new BrokerError(404,{error:{code:'recipient_not_found',effect:'not_applied',retryable:false}});
+ let calls=0;client.request=async()=>{calls++;throw rejected;};
+ const first=client.prepareSend(request);await assert.rejects(client.sendPrepared(first),{code:'recipient_not_found'});
+ assert.equal(f.inbox.unresolvedSends().length,0);assert.ok(f.inbox.outgoing(first).failure);
+ await assert.rejects(client.sendPrepared(first),{code:'recipient_not_found'});assert.equal(calls,1,'terminal rejection replay never hits the network');
+ const unknown=client.prepareSend(request);f.inbox.markOutgoingAttempt(unknown); // process disappeared after dispatch
+ await assert.rejects(client.sendPrepared(unknown),{code:'recipient_not_found'});assert.equal(f.inbox.unresolvedSends().length,1);assert.equal(f.inbox.outgoing(unknown).failure,null);
+});
+
+test('stable native call timestamp rejects old identities after bounded mapping GC without lifetime quotas',async t=>{
+ const f=local(t),tokenFile=join(f.directory,'token');writeFileSync(tokenFile,randomBytes(32).toString('base64url'),{mode:0o600});
+ let now=epoch;const client=new BrokerClient({url:'http://127.0.0.1/',insecureDevelopment:true,tokenFile,inbox:f.inbox,now:()=>now});
+ client.request=async()=>({message_id:randomUUID()});
+ const tools=createTools({client}),args={recipient_id:randomUUID(),text:'opaque'},context={operationId:'native:persisted-call',operationStartedAt:now};
+ const sent=await tools.broker_send(args,context);assert.ok(sent.message_id);
+ const rows=f.inbox.db.prepare('SELECT key FROM outgoing').all();assert.match(rows[0].key,/^op_[0-9]{13}_[a-z0-9]{32}$/);
+ assert.equal((await tools.broker_send(args,context)).message_id,sent.message_id);
+ now+=86400001;f.advance(86400001);f.inbox.collect();assert.equal(f.inbox.db.prepare('SELECT count(*) n FROM outgoing').get().n,0);
+ assert.equal((await tools.broker_send(args,context)).error.code,'retry_window_elapsed');
+ assert.equal(f.inbox.db.prepare('SELECT count(*) n FROM outgoing').get().n,0);
+ assert.ok((await tools.broker_send(args,{operationId:'native:new-call',operationStartedAt:now})).message_id);
+ assert.equal((await tools.broker_send(args,{operationId:'native:future',operationStartedAt:now+300001})).error.code,'retry_window_elapsed');
+ assert.equal(f.inbox.db.prepare("SELECT count(*) n FROM sqlite_master WHERE name='outgoing_tombstones'").get().n,0);
+});
+
+
+test('native send and resend forward internal cancellation signals without exposing them as model arguments',async t=>{
+ const f=local(t),signal=new AbortController().signal;let seen;
+ const client={inbox:f.inbox,prepareSend:(request,options)=>f.inbox.prepareSend(request,options),sendPrepared:async(_key,options)=>{seen=options.signal;return {message_id:randomUUID()};},prepareResend:()=> 'opaque-internal',resendPrepared:async(_key,options)=>{seen=options.signal;return {message_id:randomUUID()};}};
+ const tools=createTools({client});await tools.broker_send({recipient_id:randomUUID(),text:'opaque'},{operationId:'s:signal',signal});assert.equal(seen,signal);
+ // Settle the fixture intent before exercising a separate explicit resend.
+ for(const row of f.inbox.unresolvedSends())f.inbox.recordSendResult(row.key,{message_id:randomUUID()});
+ await tools.broker_resend({message_id:randomUUID()},{operationId:'s:resend-signal',signal});assert.equal(seen,signal);
+});
+
+
+test('all networked facade operations forward the private host shutdown signal',async t=>{
+ const f=local(t),signal=new AbortController().signal;const seen=[];
+ const client={inbox:f.inbox};
+ for(const method of ['listClients','sentHistory','messageContent','messageStatus','cancelMessage','updateMetadata'])client[method]=async(_input,options)=>{seen.push([method,options.signal]);return {};};
+ const tools=createTools({client});
+ for(const name of ['broker_list_clients','broker_sent_history'])await invokeTool(tools,name,{}, {signal});
+ for(const name of ['broker_message_content','broker_message_status','broker_cancel'])await invokeTool(tools,name,{message_id:randomUUID()},{signal});
+ await invokeTool(tools,'broker_update_metadata',{metadata_patch:{name:'same'},expected_metadata_revision:1},{signal});
+ assert.equal(seen.length,6);assert.ok(seen.every(([,actual])=>actual===signal));
+});
+
+
+test('send metadata refresh also honors the private host shutdown signal before preparing an intent',async t=>{
+ const f=local(t),signal=new AbortController().signal;let seen;
+ const client={inbox:f.inbox,attachment:{metadata_revision:1},refreshOwnedMetadata:async options=>{seen=options.signal;throw new LocalError('request_aborted',{effect:'unknown'});}};
+ const tools=createTools({client,observeMetadata:()=>({name:'current'})});
+ const result=await tools.broker_send({recipient_id:randomUUID(),text:'opaque'},{operationId:'metadata:call',signal});
+ assert.equal(seen,signal);assert.equal(result.error.code,'request_aborted');assert.equal(f.inbox.unresolvedSends().length,0);
+});
+
+
+test('post-acceptance local persistence failure is unknown for send and resend, with exact-operation recovery',async t=>{
+ for(const kind of ['send','resend']){
+  const f=await httpFixture(t),a=local(t),b=local(t),tokenFile=join(a.directory,'token');writeFileSync(tokenFile,f.a.token,{mode:0o600});
+  const client=new BrokerClient({url:f.base,tokenFile,insecureDevelopment:true,inbox:a.inbox,now:()=>f.now});await client.register(metadata);
+  f.store.register(f.b.entry,{protocol_version:'1',...b.identity,connection_id:randomUUID(),previous_epoch:0,metadata,capabilities:{protocol_version:'1',adapter_version:'0.1.0',client_type:'pi',receive_enabled:true,durable_inbox:true}});
+  const request={recipient_id:b.identity.client_id,content:{type:'text/plain',text:'opaque'}};
+  const source=kind==='resend'?await client.sendPrepared(client.prepareSend(request)):null;
+  const key=kind==='send'?client.prepareSend(request):client.prepareResend(source.message_id);
+  const original=client.request.bind(client),before=f.store.db.prepare('SELECT count(*) n FROM messages').get().n;
+  client.request=async(...args)=>{const result=await original(...args);if(args[0]==='POST'&&(args[1]==='/v1/messages'||args[1].endsWith('/resend')))a.inbox.diskCheck=()=>false;return result;};
+  await assert.rejects(kind==='send'?client.sendPrepared(key):client.resendPrepared(key),{code:'storage_unavailable',effect:'unknown'});
+  assert.equal(f.store.db.prepare('SELECT count(*) n FROM messages').get().n,before+1);assert.equal(a.inbox.outgoing(key).result,null);assert.equal(a.inbox.unresolvedSends()[0].key,key);
+  const accepted=f.store.db.prepare('SELECT id FROM messages ORDER BY history_order DESC LIMIT 1').get().id;
+  a.inbox.diskCheck=()=>true;client.request=original;
+  const recovered=await client.recoverOutgoing();assert.equal(recovered[0].result.message_id,accepted);assert.equal(a.inbox.outgoing(key).result.message_id,accepted);assert.equal(f.store.db.prepare('SELECT count(*) n FROM messages').get().n,before+1);
+ }
+});
+
+test('post-acceptance metadata failure stays unknown even when result is cached; pre-dispatch failures remain truthful',async t=>{
+ const f=await httpFixture(t),a=local(t),b=local(t),tokenFile=join(a.directory,'token');writeFileSync(tokenFile,f.a.token,{mode:0o600});
+ const client=new BrokerClient({url:f.base,tokenFile,insecureDevelopment:true,inbox:a.inbox,now:()=>f.now});await client.register(metadata);
+ f.store.register(f.b.entry,{protocol_version:'1',...b.identity,connection_id:randomUUID(),previous_epoch:0,metadata,capabilities:{protocol_version:'1',adapter_version:'0.1.0',client_type:'pi',receive_enabled:true,durable_inbox:true}});
+ const request={recipient_id:b.identity.client_id,content:{type:'text/plain',text:'opaque'},metadata_patch:{name:'updated'},expected_metadata_revision:1};
+ const key=client.prepareSend(request),setState=a.inbox.setState.bind(a.inbox);
+ a.inbox.setState=(name,value)=>{if(name==='metadata')throw new LocalError('storage_unavailable',{effect:'not_applied'});return setState(name,value);};
+ await assert.rejects(client.sendPrepared(key),{code:'storage_unavailable',effect:'unknown'});
+ const saved=a.inbox.outgoing(key).result;assert.ok(saved.message_id);assert.equal((await client.sendPrepared(key)).message_id,saved.message_id);assert.equal(f.store.db.prepare('SELECT count(*) n FROM messages').get().n,1);
+ a.inbox.setState=setState;
+ const fresh=client.prepareSend({recipient_id:b.identity.client_id,content:{type:'text/plain',text:'next'}});a.inbox.diskCheck=()=>false;
+ await assert.rejects(client.sendPrepared(fresh),{code:'storage_unavailable',effect:'not_applied'});assert.equal(f.store.db.prepare('SELECT count(*) n FROM messages').get().n,1);
+ a.inbox.diskCheck=()=>true;a.inbox.markOutgoingAttempt(fresh);a.inbox.diskCheck=()=>false;
+ await assert.rejects(client.sendPrepared(fresh),{code:'storage_unavailable',effect:'unknown'});assert.equal(f.store.db.prepare('SELECT count(*) n FROM messages').get().n,1);
+ a.inbox.diskCheck=()=>true;
+});
+
+test('expired unknown backlog never starves eligible recovery and stays durably summarized without renewal',async t=>{
+ const f=await httpFixture(t),a=local(t),b=local(t),tokenFile=join(a.directory,'token');
+ writeFileSync(tokenFile,f.a.token,{mode:0o600});
+ const request={recipient_id:b.identity.client_id,content:{type:'text/plain',text:'recovery is opaque'}};
+ for(let i=0;i<105;i++){const key=a.inbox.prepareSend(request,{retryWindowSeconds:1});a.inbox.markOutgoingAttempt(key);}
+ f.advance(1000);a.advance(1000); // equality is expired, not one last retry
+ const before=a.inbox.db.prepare('SELECT * FROM outgoing ORDER BY key').all();
+ a.reopen();
+ const client=new BrokerClient({url:f.base,tokenFile,insecureDevelopment:true,inbox:a.inbox,now:()=>f.now});
+ await client.register(metadata);
+ await f.request('/v1/sessions',{token:f.b.token,method:'POST',body:{protocol_version:'1',...b.identity,connection_id:randomUUID(),previous_epoch:0,metadata,capabilities:{protocol_version:'1',adapter_version:'0.1.0',client_type:'pi',receive_enabled:true,durable_inbox:true}}});
+ const key=client.prepareSend(request);a.inbox.markOutgoingAttempt(key);
+ const accepted=f.store.send(f.a.entry,a.identity.client_id,1,key,request); // accepted response was lost
+ const recovered=await client.recoverOutgoing({limit:1});
+ assert.equal(recovered.length,2);assert.equal(recovered[0].result.message_id,accepted.message_id);assert.equal(recovered[0].result.acceptance_replayed,true);
+ assert.equal(recovered[1].error.code,'retry_window_elapsed');assert.equal(recovered[1].error.effect,'unknown');assert.equal(recovered[1].count,105);
+ assert.ok(!JSON.stringify(recovered).includes('op_'));assert.ok(!JSON.stringify(recovered).includes('send_key'));
+ assert.deepEqual(a.inbox.db.prepare('SELECT * FROM outgoing WHERE key<>? ORDER BY key').all(key),before,'expired rows retain exact identity, request, uncertainty and deadline');
+ assert.equal(f.store.db.prepare('SELECT count(*) n FROM messages').get().n,1,'recovery used the original acceptance, not a replacement send');
+ const plans=a.inbox.db.prepare('EXPLAIN QUERY PLAN SELECT key,created_at,retry_until FROM outgoing WHERE result IS NULL AND failure IS NULL AND retry_until>? ORDER BY retry_until,created_at,key LIMIT ?').all(f.now,1);
+ assert.ok(plans.some(row=>row.detail.includes('outgoing_recovery')));assert.ok(plans.every(row=>!row.detail.includes('TEMP B-TREE')));
+ client.request=async()=>{assert.fail('expired operations must not dispatch');};
+ assert.deepEqual(await client.recoverOutgoing({limit:100}),[recovered[1]]);
+ assert.throws(()=>a.inbox.outgoingRecovery(101),{code:'invalid_configuration'});
 });
