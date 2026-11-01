@@ -1,4 +1,5 @@
 import { DatabaseSync, backup } from 'node:sqlite';
+import { PresenceService, presenceSnapshot } from './presence.mjs';
 import { randomUUID } from 'node:crypto';
 import { mkdirSync, chmodSync, statfsSync, statSync, realpathSync, lstatSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
@@ -24,6 +25,7 @@ export class BrokerStore {
     }
     if (this.limits.lease_seconds < 3 * this.limits.heartbeat_seconds) throw new Error('Lease must cover three heartbeat intervals.');
     const l=this.limits;
+    if(l.offline_notice_seconds>604800)throw new Error('Offline notice grace exceeds seven days.');
     if(l.retention_seconds<DEFAULTS.retention_seconds||l.registration_retention_seconds<DEFAULTS.registration_retention_seconds)throw new Error('Retention cannot be shorter than the v1 minimum.');
     if(l.min_ttl_seconds<60||l.max_ttl_seconds>604800||l.default_ttl_seconds<l.min_ttl_seconds||l.default_ttl_seconds>l.max_ttl_seconds||l.max_wait_seconds>30||l.max_message_bytes>65536||l.max_request_bytes>98304)throw new Error('Configured limits exceed the v1 wire bounds.');
 
@@ -53,6 +55,7 @@ export class BrokerStore {
       chmodSync(this.path, 0o600);
       this.db.exec('PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=1000; PRAGMA trusted_schema=OFF;');
       this.migrate();
+      this.presence = new PresenceService(this);
       this.tx(() => {
         this.db.exec('UPDATE sessions SET lease_until=0;');
         this.db.exec("UPDATE messages SET state='queued', claim_id=NULL, claim_epoch=NULL, claim_until=NULL WHERE state='claimed';");
@@ -125,7 +128,7 @@ export class BrokerStore {
   safe() { try { return !this.closed && !this.poisoned && this.diskCheck(); } catch { return false; } }
   close() { if (this.closed) return; this.closed = true; this.db.close(); this.owner.close(); }
   async backup(destination) { await backup(this.db, destination); chmodSync(destination, 0o600); }
-  policy() { const l = this.limits; return { heartbeat_interval_seconds: l.heartbeat_seconds, lease_seconds: l.lease_seconds, claim_seconds: l.claim_seconds, retention_seconds: l.retention_seconds, registration_retry_seconds: l.registration_retention_seconds, send_retry_seconds: l.retry_window_seconds }; }
+  policy() { const l = this.limits; return { heartbeat_interval_seconds: l.heartbeat_seconds, lease_seconds: l.lease_seconds, claim_seconds: l.claim_seconds, retention_seconds: l.retention_seconds, registration_retry_seconds: l.registration_retention_seconds, send_retry_seconds: l.retry_window_seconds, offline_notice_seconds:l.offline_notice_seconds, resumable_disconnect:true, presence_events:true }; }
   own(auth, id) {
     const s = this.db.prepare('SELECT * FROM sessions WHERE id=?').get(id);
     if (!s || s.principal !== auth.principal_id || s.adapter !== auth.adapter_id || !auth.client_types.includes(s.type)) fail(404, 'recipient_not_found', 'headers.X-Client-ID');
@@ -138,7 +141,7 @@ export class BrokerStore {
     if (!Number.isSafeInteger(epoch) || s.epoch !== epoch || s.lease_until <= this.clock()) fail(409, 'stale_lease_epoch', 'headers.X-Lease-Epoch');
     return s;
   }
-  registrationResult(s) { return { client_id: s.id, lease_epoch: s.epoch, metadata_revision: s.revision, lease_expires_at: iso(s.lease_until), server_time: iso(this.clock()), policy: this.policy() }; }
+  registrationResult(s, now=this.clock()) { return { client_id: s.id, lease_epoch: s.epoch, metadata_revision: s.revision, lease_expires_at: iso(s.lease_until), server_time: iso(now), policy: this.policy() }; }
   register(auth, input) {
     const b = validateRegistration(input), request = canonical(b), now = this.clock();
     if (!auth.client_types.includes(b.client_type)) fail(403, 'forbidden', 'client_type');
@@ -159,6 +162,7 @@ export class BrokerStore {
       const values = [b.client_id, auth.principal_id, auth.adapter_id, b.session_instance_id, b.client_type, b.connection_id, epoch, now + this.limits.lease_seconds * 1000, now, canonical(b.metadata), revision, canonical(b.capabilities), canonical(auth.scopes), auth.credential_id];
       this.db.prepare(`INSERT INTO sessions(id,principal,adapter,instance,type,connection,epoch,lease_until,heartbeat_at,metadata,revision,capabilities,scopes,credential)
         VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET connection=excluded.connection,epoch=excluded.epoch,lease_until=excluded.lease_until,heartbeat_at=excluded.heartbeat_at,metadata=excluded.metadata,revision=excluded.revision,capabilities=excluded.capabilities,scopes=excluded.scopes,credential=excluded.credential`).run(...values);
+      this.db.prepare('DELETE FROM session_disconnects WHERE session=?').run(b.client_id);
       this.db.prepare("UPDATE messages SET state='queued',claim_id=NULL,claim_epoch=NULL,claim_until=NULL WHERE recipient=? AND state='claimed'").run(b.client_id);
       const result = this.registrationResult(this.own(auth,b.client_id));
       this.db.prepare('INSERT INTO registrations VALUES(?,?,?,?,?)').run(b.client_id,b.connection_id,request,canonical(result),now);
@@ -166,14 +170,29 @@ export class BrokerStore {
     });
   }
   session(auth, id) {
-    const s = this.own(auth,id);
-    return { ...this.registrationResult(s), client_type:s.type,session_instance_id:s.instance,connection_id:s.connection,metadata:parse(s.metadata),capabilities:parse(s.capabilities),closed:!!s.closed,connected:!s.closed && s.lease_until > this.clock() };
+    const s = this.own(auth,id), now=this.clock();
+    return { ...this.registrationResult(s,now), client_type:s.type,session_instance_id:s.instance,connection_id:s.connection,metadata:parse(s.metadata),capabilities:parse(s.capabilities),closed:!!s.closed,...presenceSnapshot(s,now) };
   }
   heartbeat(auth, id, epoch) { return this.tx(() => {
     this.live(auth,id,epoch);
     const now = this.clock(), until = now + this.limits.lease_seconds*1000;
     this.db.prepare('UPDATE sessions SET lease_until=?,heartbeat_at=?,credential=? WHERE id=?').run(until,now,auth.credential_id,id);
     return {client_id:id,lease_epoch:epoch,lease_expires_at:iso(until),server_time:iso(now)};
+  }); }
+  disconnect(auth, id, epoch) { return this.tx(() => {
+    const s = this.own(auth, id);
+    if (!intersects(parse(s.scopes), auth.scopes)) fail(403, 'forbidden');
+    if (s.closed) fail(410, 'session_closed');
+    if (!Number.isSafeInteger(epoch) || s.epoch !== epoch) fail(409, 'stale_lease_epoch', 'headers.X-Lease-Epoch');
+    // Idempotent for this attachment, but an old process cannot disconnect a
+    // replacement epoch. Identity, mailbox and reconnect capability survive.
+    const now = this.clock();
+    this.db.prepare('UPDATE sessions SET lease_until=min(lease_until,?) WHERE id=?').run(now, id);
+    // Only ending a live lease mints later terminal-close authority. Retrying an
+    // already marked epoch preserves it; an ordinary expired lease gains none.
+    if(s.lease_until>now)this.db.prepare('INSERT INTO session_disconnects(session,epoch) VALUES(?,?) ON CONFLICT(session) DO UPDATE SET epoch=excluded.epoch').run(id,epoch);
+    this.sweepInternal();
+    return {client_id:id,lease_epoch:epoch,...presenceSnapshot(this.own(auth,id),now),server_time:iso(now)};
   }); }
   patch(s, b) {
     if (s.revision !== b.expected_metadata_revision) fail(409,'metadata_conflict','expected_metadata_revision',{details:{current_revision:s.revision}});
@@ -188,7 +207,13 @@ export class BrokerStore {
   closeSession(auth,id,epoch) { return this.tx(()=>{
     const s=this.own(auth,id);
     if (!s.closed) {
-      this.live(auth,id,epoch);
+      const disconnected=this.db.prepare('SELECT epoch FROM session_disconnects WHERE session=?').get(id);
+      if(disconnected?.epoch===epoch && s.epoch===epoch) {
+        // An explicit resumable disconnect keeps the authority to later close
+        // that exact attachment. Expired leases without this marker stay fenced.
+        if(!intersects(parse(s.scopes),auth.scopes)) fail(403,'forbidden');
+      } else this.live(auth,id,epoch);
+      this.db.prepare('DELETE FROM session_disconnects WHERE session=?').run(id);
       this.db.prepare('UPDATE sessions SET closed=1,lease_until=0 WHERE id=?').run(id);
       this.db.prepare("UPDATE messages SET state='failed',reason='recipient_closed',terminal_at=? WHERE recipient=? AND state IN ('queued','claimed')").run(this.clock(),id);
     } else if (s.epoch!==epoch) fail(409,'stale_lease_epoch');
@@ -215,14 +240,14 @@ export class BrokerStore {
     const limit=query.limit===undefined?50:Number(query.limit);
     if(!Number.isInteger(limit)||limit<1||limit>100) fail(400,'invalid_request','query.limit');
     const rows=this.db.prepare('SELECT * FROM sessions WHERE id>? ORDER BY id').iterate(query.cursor??'');
-    const clients=[]; let more=false;
+    const clients=[], observedAt=this.clock(); let more=false;
     for(const s of rows){
-      const m=parse(s.metadata), connected=!s.closed&&s.lease_until>this.clock();
+      const m=parse(s.metadata), connected=!s.closed&&s.lease_until>observedAt;
       if(!intersects(auth.scopes,parse(s.scopes)) || ((query.connected??'true')==='true'&&!connected)|| (query.client_type&&s.type!==query.client_type)||(query.name&&m.name!==query.name)||(query.project&&m.project!==query.project)) continue;
       if(clients.length===limit){more=true;break;}
-      clients.push({client_id:s.id,client_type:s.type,...m,metadata_revision:s.revision,capabilities:parse(s.capabilities),connected,lease_expires_at:iso(s.lease_until),last_heartbeat_at:iso(s.heartbeat_at)});
+      clients.push({client_id:s.id,client_type:s.type,...m,metadata_revision:s.revision,capabilities:parse(s.capabilities),...presenceSnapshot(s,observedAt)});
     }
-    return {clients,next_cursor:more?clients.at(-1).client_id:null,server_time:iso(this.clock())};
+    return {clients,next_cursor:more?clients.at(-1).client_id:null,server_time:iso(observedAt)};
   }
   rate(id, perMinute, burst) {
     const now=this.clock(), old=this.db.prepare('SELECT * FROM rates WHERE id=?').get(id);
@@ -286,6 +311,7 @@ export class BrokerStore {
     this.db.prepare('DELETE FROM registrations WHERE rowid IN (SELECT rowid FROM registrations WHERE created<? LIMIT ?)').run(now-this.limits.registration_retention_seconds*1000,batch);
     this.db.prepare('DELETE FROM claims WHERE rowid IN (SELECT rowid FROM claims WHERE created<? LIMIT ?)').run(now-(this.limits.max_ttl_seconds+this.limits.retention_seconds)*1000,batch);
     this.db.prepare('DELETE FROM completions WHERE rowid IN (SELECT rowid FROM completions WHERE created<? LIMIT ?)').run(now-(this.limits.max_ttl_seconds+this.limits.retention_seconds)*1000,batch);
+    this.presence?.sweep(batch);
   }
   sweep() {return this.tx(()=>this.sweepInternal());}
   claim(auth,id,epoch,key,input,{finalizeEmpty=true}={}) {

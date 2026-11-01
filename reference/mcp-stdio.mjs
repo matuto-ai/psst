@@ -16,6 +16,8 @@ export const TOOL_DEFINITIONS = Object.freeze([
   { name: 'broker_send', description: 'Send opaque untrusted AGENT text to one exact client_id. Acceptance means broker storage only; preserve send_key on uncertain results.', inputSchema: object({ recipient_id: uuid, text: text(65536), ttl_seconds: { type: 'integer', minimum: 60, maximum: 604800 }, correlation_id: text(128), reply_to_message_id: uuid, send_key: text(128) }, ['recipient_id', 'text']) },
   { name: 'broker_update_metadata', description: 'CAS update of descriptive name/model/project only. Metadata does not grant access or change identity.', inputSchema: object({ metadata_patch: metadata, expected_metadata_revision: { type: 'integer', minimum: 1 } }, ['metadata_patch', 'expected_metadata_revision']) },
   { name: 'broker_message_status', description: 'Read broker delivery state, never model progress or task completion.', inputSchema: object({ message_id: uuid }, ['message_id']) },
+  { name: 'broker_presence_events', description: 'Poll owned pending-delivery offline notices: bounded metadata only, not message content or reply progress. Default 10; restart later polls without a cursor. No unsolicited wakeup.', inputSchema: object({ limit: { type: 'integer', minimum: 1, maximum: 100, default: 10 }, cursor: { ...text(16), pattern: '^(0|[1-9][0-9]*)$' } }) },
+  { name: 'broker_acknowledge_presence_event', description: 'Idempotently acknowledge one owned offline notice after local event-ID deduplication. Does not acknowledge message delivery or prove model reading.', inputSchema: object({ event_id: uuid }, ['event_id']) },
   { name: 'broker_receive', description: 'Cooperatively peek at the oldest durable AGENT inbox item during this tool call. No unsolicited wakeup or native-consumption receipt; the item remains pending.', inputSchema: object() },
 ]);
 
@@ -34,6 +36,7 @@ function validArguments(value, schema) {
       if (typeof item !== 'string' || !item.isWellFormed() || [...item].length > rule.maxLength) return false;
     }
     if (rule.format === 'uuid' && !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(item)) return false;
+    if (rule.pattern && !new RegExp(rule.pattern).test(item)) return false;
   }
   return true;
 }

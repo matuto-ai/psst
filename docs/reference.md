@@ -54,6 +54,14 @@ shutdown callers must await completion before closing the inbox. Session close i
 still best effort: unknown network/storage outcomes never justify guessing an epoch
 or adopting another connection; lease expiry is the fallback.
 
+For resumable shutdown, `stop({closeSession:false})` best-effort disconnects the
+final attachment when the broker advertises `resumable_disconnect`; it preserves
+the identity and mailbox. A later explicit terminal stop can close that same
+disconnected epoch, but never a replacement. See [presence](presence.md) for the
+bounded metadata-only `broker_presence_events` and
+`broker_acknowledge_presence_event` cooperative MCP tools. These do not enable
+unsolicited native model-input injection.
+
 ## Configuration and transport
 
 `Inbox` requires `directory` and `identity`. The directory is local, private

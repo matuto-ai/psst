@@ -95,7 +95,7 @@ function pointer(document, fragment) {
 }
 
 test('OpenAPI contains every public route and resolves all internal references', () => {
-  const expected = ['/', '/admin', '/admin/login', '/admin/logout', '/admin/requests/{request_id}/{action}', '/v1/enrollment-requests', '/v1/enrollment-requests/{request_id}', '/v1/enrollments', '/healthz', '/readyz', '/v1/sessions', '/v1/sessions/{client_id}', '/v1/sessions/{client_id}/heartbeat', '/v1/sessions/{client_id}/metadata', '/v1/sessions/{client_id}/close', '/v1/clients', '/v1/messages', '/v1/messages/{message_id}', '/v1/mailbox/claim', '/v1/mailbox/{message_id}/renew', '/v1/mailbox/{message_id}/complete'];
+  const expected = ['/v1/sessions/{client_id}/disconnect', '/v1/presence-events', '/v1/presence-events/{event_id}/ack', '/', '/admin', '/admin/login', '/admin/logout', '/admin/requests/{request_id}/{action}', '/v1/enrollment-requests', '/v1/enrollment-requests/{request_id}', '/v1/enrollments', '/healthz', '/readyz', '/v1/sessions', '/v1/sessions/{client_id}', '/v1/sessions/{client_id}/heartbeat', '/v1/sessions/{client_id}/metadata', '/v1/sessions/{client_id}/close', '/v1/clients', '/v1/messages', '/v1/messages/{message_id}', '/v1/mailbox/claim', '/v1/mailbox/{message_id}/renew', '/v1/mailbox/{message_id}/complete'];
   assert.deepEqual(Object.keys(api.paths).sort(), expected.sort());
   function walk(value) {
     if (!value || typeof value !== 'object') return;

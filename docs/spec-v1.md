@@ -118,13 +118,21 @@ An adapter restart may reconnect only if it can prove locally that it is attache
 - Ordinary send/list traffic does not replace the heartbeat requirement. Explicit heartbeat is the source of presence renewal; the adapter must continue it while busy, idle, awaiting human input, and during a long poll.
 - `connected` means an authenticated, unexpired adapter/session lease. It does **not** mean the agent is making progress, the model is responding, or it is safe to inject a message.
 - Busy/idle/permission/input observations remain **adapter-local**. They MUST NOT be reported as broker task/conversation state or used by the broker to decide what a message means. Unknown local harness state blocks unsafe final-hop injection but does not stop presence or durable inbox receipt.
-- The adapter MUST NOT keep a closed harness apparently alive. When the owned session closes, it stops heartbeats, cancels receive work, requests close, and exits its session-scoped worker. Abrupt death is handled by lease expiry.
+- The adapter MUST NOT keep a closed harness apparently alive. On resumable process shutdown, it stops heartbeats, cancels receive work, requests resumable disconnect when supported, and exits its session-scoped worker. Explicit terminal session close instead requests close. Abrupt death is handled by lease expiry.
 
 `GET /v1/clients?connected=true` returns only current leases by default. Authorized offline/tombstone inspection is available explicitly. A list is a snapshot, not a guarantee that the recipient remains connected when a later send happens.
 
 ### 4.4 Expiry, close, and broker restart
 
 Lease expiry marks the client offline, blocks its old lease operations, and releases outstanding claims for safe recovery. It does not erase mailbox content. Known offline sessions may receive messages until message TTL, provided the session has not been explicitly closed; the send receipt states the recipient was offline.
+
+Resumable disconnect ends only the owned current epoch's lease, preserving the
+identity and mailbox. It is idempotent for that epoch even after expiry, but never
+affects a replacement. Disconnecting a live lease records exact-epoch authority
+for a later explicit terminal close; retries preserve this marker, and a new
+attachment removes it. Disconnecting an ordinary already-expired unmarked lease
+does not grant terminal-close authority. See [presence](presence.md) for the
+freshness fields and bounded pending-delivery notice contract.
 
 Explicit session close is irreversible for that client ID. It rejects new sends, fences the lease, and fails still-pending messages with `recipient_closed`. A message already accepted by the adapter inbox cannot be retracted. Any unconfirmed transport attempt retains its delivery-uncertainty marker. Retain an ownership tombstone to prevent address reuse.
 
@@ -307,14 +315,17 @@ Authenticated session operations carry `Authorization: Bearer …`, `X-Client-ID
 | `POST /v1/sessions/{client_id}/heartbeat` | Renew current lease only; no busy/idle/task/progress payload |
 | `PATCH /v1/sessions/{client_id}/metadata` | CAS update of mutable fields only |
 | `POST /v1/sessions/{client_id}/close` | Idempotently close/fence the exact session |
+| `POST /v1/sessions/{client_id}/disconnect` | End the current attachment lease without terminally closing its resumable identity |
 | `GET /v1/clients?connected=true` | Paginated authorized discovery; explicit filters by type/name/project only |
+| `GET /v1/presence-events` | Bounded owned metadata-only pending-delivery notices; no live sender lease required |
+| `POST /v1/presence-events/{event_id}/ack` | Idempotent owned notice ACK with current scope authorization; no message delivery or reading assertion |
 | `POST /v1/messages` | Idempotently accept one exact-recipient text message |
 | `GET /v1/messages/{message_id}` | Sender/recipient owner reads receipt; sender sees only own message, no other mailbox |
 | `POST /v1/mailbox/claim` | Current recipient claims FIFO head with bounded long-poll timeout |
 | `POST /v1/mailbox/{message_id}/renew` | Renew current claim, not the session heartbeat |
 | `POST /v1/mailbox/{message_id}/complete` | Idempotent current-claim completion with explicit outcome |
 
-`GET /v1/messages/{message_id}` remains available to the authenticated owning principal after its session lease expires, for the retention window. Mutation/claim operations require a live current lease. Receipt reads MUST NOT disclose another sender's messages just because an ID is guessed. The detailed OpenAPI/JSON Schema and canonical fixtures are an implementation deliverable; they must preserve this contract and document all request/response fields before adapter release.
+`GET /v1/messages/{message_id}` remains available to the authenticated owning principal after its session lease expires, for the retention window. Mutation/claim operations require a live current lease except the narrowly fenced resumable disconnect/marked terminal-close operations above and owned presence-event ACK. Presence-event reads and ACK require authenticated sender ownership and current scope authorization with `X-Client-ID`, but not `X-Lease-Epoch`; they neither renew a lease nor mutate message delivery. Receipt reads MUST NOT disclose another sender's messages just because an ID is guessed. The detailed OpenAPI/JSON Schema and canonical fixtures are an implementation deliverable; they must preserve this contract and document all request/response fields before adapter release.
 
 ### 8.1 Errors
 
@@ -343,7 +354,7 @@ No 2xx response means more than its documented durable boundary. A network timeo
 
 ### 9.1 Required lifecycle
 
-The session-scoped adapter starts with or attaches through an explicit supported connection to one harness session. It discovers actual capabilities and model metadata, registers, maintains heartbeat independently, and handles send/discovery/update tools. It receives only its session's mailbox, durably stores/deduplicates and ACKs its local inbox, then admits pending local messages through the strongest verified safe mechanism available. Busy/idle/approval information and local injection outcomes never become broker conversation-state telemetry. On shutdown it closes, cancels polls, and exits. A shared adapter supervisor MAY manage multiple workers, but every worker has separate identity, lease, journal, and session ownership.
+The session-scoped adapter starts with or attaches through an explicit supported connection to one harness session. It discovers actual capabilities and model metadata, registers, maintains heartbeat independently, and handles send/discovery/update tools. It receives only its session's mailbox, durably stores/deduplicates and ACKs its local inbox, then admits pending local messages through the strongest verified safe mechanism available. Busy/idle/approval information and local injection outcomes never become broker conversation-state telemetry. On shutdown it cancels polls, requests resumable disconnect or explicit terminal close as appropriate, and exits. A shared adapter supervisor MAY manage multiple workers, but every worker has separate identity, lease, journal, and session ownership.
 
 The final-hop guard MUST consider active turns and pending permission/confirmation/input prompts. An idle check followed by an unrelated submit call is not an atomic safety guarantee: if human input or a new turn can race it, use a native queue or a single-owner managed input arbiter. Otherwise advertise cooperative-only/unsupported mode. Never type into the terminal, send Enter, simulate keys, kill an active process, call abort/steer, or toggle approval flags to make delivery work.
 
