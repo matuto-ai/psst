@@ -36,7 +36,7 @@ test('composed HTTP admin reflects offline acceptance, cancelled/resend identity
   assert.equal(disconnected.body.presence_state, 'disconnected'); assert.equal(disconnected.body.connected, false);
   assert.ok(!(await f.api('/v1/clients')).body.clients.some(row => row.client_id === b.client_id));
   assert.equal((await f.api('/v1/clients?connected=false')).body.clients.find(row => row.client_id === b.client_id).presence_state, 'disconnected');
-  const offline = await f.html('/admin/sessions?client_id=' + b.client_id); assert.match(offline.text, /state-disconnected/); assert.match(offline.text, /Offline · resumable identity/);
+  const offline = await f.html('/admin/sessions?state=all&client_id=' + b.client_id); assert.match(offline.text, /state-disconnected/); assert.match(offline.text, /Offline · resumable identity/);
 
   const originalText = 'COMPOSED-OPAQUE-CONTENT <script>not authority</script>', operation = randomUUID();
   const sent = await f.api('/v1/messages', { method: 'POST', id: a.client_id, key: operation, body: sendBody(b.client_id, originalText) });
@@ -60,12 +60,12 @@ test('composed HTTP admin reflects offline acceptance, cancelled/resend identity
   assert.equal(notices.body.events.length, 1); assert.deepEqual(notices.body.events[0].messages.map(m => m.message_id), [resent.body.message_id]);
   assert.ok(!JSON.stringify(notices.body).includes('COMPOSED-OPAQUE-CONTENT'));
   assert.equal((await f.api('/v1/presence-events', { id: a.client_id })).body.events[0].event_id, notices.body.events[0].event_id);
-  assert.match((await f.html('/admin/sessions?client_id=' + a.client_id)).text, /state-disconnected/, 'fresh admin read does not present the expired sender lease as active');
+  assert.match((await f.html('/admin/sessions?state=all&client_id=' + a.client_id)).text, /state-disconnected/, 'fresh admin read does not present the expired sender lease as active');
   assert.equal((await f.api('/v1/sessions', { method: 'POST', body: { ...a, previous_epoch: 1, connection_id: randomUUID() } })).body.lease_epoch, 2);
   assert.equal((await f.api(`/v1/messages/${resent.body.message_id}/cancel`, { method: 'POST', id: a.client_id, epoch: 2, body: {} })).body.delivery_state, 'cancelled');
   assert.deepEqual((await f.api('/v1/presence-events', { id: a.client_id })).body.events, [], 'no stale notice after cancellation removes all relevant pending mail');
   assert.equal((await f.api('/v1/sessions', { method: 'POST', owner: f.b, body: { ...b, previous_epoch: 1, connection_id: randomUUID() } })).body.client_id, b.client_id);
-  assert.match((await f.html('/admin/sessions?client_id=' + b.client_id)).text, /state-connected/);
+  assert.match((await f.html('/admin/sessions?state=all&client_id=' + b.client_id)).text, /state-connected/);
 
   const fresh = await f.api('/v1/messages', { method: 'POST', id: a.client_id, epoch: 2, key: randomUUID(), body: sendBody(b.client_id, originalText) });
   const claim = await f.api('/v1/mailbox/claim', { method: 'POST', owner: f.b, id: b.client_id, epoch: 2, key: randomUUID(), body: {} });

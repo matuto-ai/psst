@@ -1,8 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { randomUUID, randomBytes } from 'node:crypto';
+import { createHash, randomUUID, randomBytes } from 'node:crypto';
 import { fixture, registration, sendBody } from './helpers.mjs';
 import { ApprovalService } from '../src/approval.mjs';
+import { adminClient } from '../src/admin-client.mjs';
 import { AdminUI } from '../src/admin.mjs';
 import { AdminData, ADMIN_PAGE_BYTES, publicLabel } from '../src/admin-data.mjs';
 import { createBrokerServer } from '../src/server.mjs';
@@ -37,7 +38,7 @@ test('admin sessions distinguish same names/installation and derive lease freshn
   assert.equal(data.sessions(params({ state: 'disconnected' })).clients.length, 2);
   assert.equal(data.sessions(params({ state: 'closed' })).clients[0].client_id, a.client_id);
   assert.equal(f.store.db.prepare('SELECT closed FROM sessions WHERE id=?').get(b.client_id).closed, 0);
-  const restarted = new AdminData(f.restart()).sessions(params());
+  const restarted = new AdminData(f.restart()).sessions(params({ state: 'all' }));
   assert.ok(restarted.clients.every(s => !s.connected));
   assert.ok(restarted.clients.every(s => s.lease_expires_at === null));
 });
@@ -53,7 +54,7 @@ test('admin registry uses exact bounded SQL pagination, validated filters and bo
   assert.ok(data.sessions(params({ installation_id: f.a.entry.adapter_id })).clients.every(s => s.installation_id === f.a.entry.adapter_id));
   assert.equal(data.sessions(params({ limit: '25' })).clients.length, 24);
   const cursor = data.sessions(params()).next_cursor;
-  for (const query of [{ limit: '0' }, { limit: '101' }, { limit: '1.5' }, { limit: '01' }, { state: 'active' }, { client_type: 'unknown' }, { client_id: "' OR 1=1" }, { installation_id: '../private' }, { cursor: cursor + 'x' }, { cursor, state: 'connected' }, { unexpected: 'x' }]) assert.throws(() => data.sessions(params(query)), e => e.status === 400);
+  for (const query of [{ limit: '0' }, { limit: '101' }, { limit: '1.5' }, { limit: '01' }, { state: 'active' }, { client_type: 'unknown' }, { client_id: "' OR 1=1" }, { installation_id: '../private' }, { cursor: cursor + 'x' }, { cursor, state: 'all' }, { unexpected: 'x' }]) assert.throws(() => data.sessions(params(query)), e => e.status === 400);
   assert.throws(() => data.sessions(params('limit=10&limit=10')), e => e.status === 400);
 });
 
@@ -116,10 +117,13 @@ test('admin pages authenticate every read, preserve security headers and keep se
   assert.ok(!sessions.html.includes('data-message-id')); assert.ok(!sessions.html.includes('data-request-id'));
   const list = await f.page('/admin/messages'); assert.match(list.html, /data-message-id=/); assert.ok(!list.html.includes('PRIVATE-TEXT-ONLY-IN-DETAIL'));
   assert.ok(!list.html.includes('data-client-id=')); assert.ok(!list.html.includes('data-request-id='));
-  const detail = await f.page(`/admin/messages/${message.message_id}`); assert.match(detail.html, /PRIVATE-TEXT-ONLY-IN-DETAIL &lt;script&gt;evil\(\)&lt;\/script&gt;/); assert.ok(!detail.html.includes('<script>'));
+  const detail = await f.page(`/admin/messages/${message.message_id}`); assert.match(detail.html, /PRIVATE-TEXT-ONLY-IN-DETAIL &lt;script&gt;evil\(\)&lt;\/script&gt;/); assert.equal((detail.html.match(/<script>/g) ?? []).length, 1); assert.ok(!detail.html.includes('<script>evil()'));
   for (const page of [sessions, list, detail]) {
     assert.equal(page.headers.get('cache-control'), 'no-store'); assert.equal(page.headers.get('x-content-type-options'), 'nosniff');
     assert.match(page.headers.get('content-security-policy'), /default-src 'none'/); assert.match(page.headers.get('content-security-policy'), /form-action 'self'/);
+    assert.ok(page.headers.get('content-security-policy').includes("script-src 'sha256-" + createHash('sha256').update(adminClient).digest('base64') + "'"));
+    assert.match(page.headers.get('content-security-policy'), /connect-src 'self'/);
+    assert.ok(!page.headers.get('content-security-policy').includes("script-src 'unsafe-inline'"));
     assert.ok(!page.html.includes(f.cookie)); assert.ok(!page.html.includes(f.a.token));
   }
 });

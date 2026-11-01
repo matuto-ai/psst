@@ -1,6 +1,7 @@
 import { createHash, randomBytes, timingSafeEqual, scrypt as scryptCallback } from 'node:crypto';
 import { promisify } from 'node:util';
 import { ApiError } from './protocol.mjs';
+import { adminClient } from './admin-client.mjs';
 import { AdminData } from './admin-data.mjs';
 import { document, loginPage, sessionsPage, messagesPage, messagePage, approvalsPage, errorPage } from './admin-pages.mjs';
 const scrypt=promisify(scryptCallback),hash=s=>createHash('sha256').update(s).digest('hex');
@@ -44,7 +45,7 @@ export class AdminUI {
     });
   }
   cookie(session){return `psst_admin=${session?.cookie??''}; Path=/admin; HttpOnly; SameSite=Strict; Max-Age=${session?Math.max(0,Math.floor((session.expires-this.store.clock())/1000)):0}${this.insecureDevelopment?'':'; Secure'}`;}
-  headers(){return {'Content-Type':'text/html; charset=utf-8','Cache-Control':'no-store','X-Content-Type-Options':'nosniff','Content-Security-Policy':"default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'",'Referrer-Policy':'same-origin'};}
+  headers(){return {'Content-Type':'text/html; charset=utf-8','Cache-Control':'no-store','X-Content-Type-Options':'nosniff','Content-Security-Policy':`default-src 'none'; script-src 'sha256-${createHash("sha256").update(adminClient).digest("base64")}'; connect-src 'self'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'`,'Referrer-Policy':'same-origin'};}
   html(res,status,content,session,options={}){
     res.writeHead(status,{...this.headers(),...(session?{'Set-Cookie':this.cookie(session)}:{})});
     res.end(document(content,{...options,csrf:session?.csrf}));
@@ -90,7 +91,7 @@ export class AdminUI {
         }
         this.html(res,200,content,session,{active,title:`Psst · ${active==='sessions'?'Clients & sessions':active==='messages'?'Messages':'Approvals'}`});
       }catch(error){
-        if(!(error instanceof ApiError)||![400,404,503].includes(error.status))throw error;
+        if(!(error instanceof ApiError)||![400,404,409,503].includes(error.status))throw error;
         this.html(res,error.status,errorPage(error.status,`/admin/${active}`),session,{active,title:'Psst · Request unavailable'});
       }
       return true;

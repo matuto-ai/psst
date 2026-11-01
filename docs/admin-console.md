@@ -3,8 +3,12 @@
 The existing administrator login now opens a navigable console. Authentication,
 password verification, cookie attributes, login throttling, origin/CSRF checks,
 expiry, restart invalidation and installation revocation are unchanged. No
-additional configuration, client-side JavaScript, framework or service is needed.
-The pages retain `Cache-Control: no-store` and the restrictive CSP.
+additional configuration, framework or service is needed. A small, static
+CSP-hashed script progressively enhances ordinary GET forms and theme selection.
+With JavaScript unavailable, forms retain an explicit Apply button. The pages
+retain `Cache-Control: no-store`; script execution is limited to the shipped hash,
+and dynamic reads are restricted to the same origin. Authentication and all
+mutation forms retain the existing guards.
 
 - **Clients & sessions** (`/admin/sessions`) is the broker session registry.
 - **Messages** (`/admin/messages`) is transport metadata, not a conversation feed.
@@ -50,13 +54,45 @@ use bounded SQL result sets and indexes, not an all-history application load.
 Unknown or duplicate parameters, malformed IDs, invalid bounds and altered
 cursors return a recoverable error page. No results/content load on that error.
 
-Sessions are ordered by ascending exact client ID. Filters are exact `client_id`,
-`installation_id`, `client_type`, and `state` (`connected`, `disconnected`, `closed`).
-Each page evaluates presence at its displayed server observation time. Registry
-and metadata changes are live between pages; new lower-sorted IDs or sessions
-whose presence changes may require returning to the first page. A page is not a
-frozen process census. Use browser Back for the previous page, **Back to first
-page** for a fresh search, or **Refresh** to observe current state.
+Sessions default to **Connected**, ordered by **visible name ascending**. Select
+**All registered sessions** to include disconnected and closed identities. This
+is a filter, not a hidden secondary status sort. Click Session name, Client type,
+Transport or Last heartbeat to select ascending/descending order; only exact
+client ID ascending breaks equal keys. Name matching is a literal prefix of the
+same safe label displayed in the table, with SQLite ASCII case folding (not
+locale-aware collation). Private path text is not searchable or sorted secretly.
+Exact IDs are under the expandable **Exact identifiers** controls (automatically
+opened by a bookmarked ID filter). Other filters are exact `client_id`, `installation_id`, `client_type`, and `state`
+(`all`, `connected`, `disconnected`, `closed`). URL parameters `sort` accept
+`name`, `type`, `state`, `heartbeat`; `direction` accepts `asc`/`desc`.
+
+Selectors update immediately; text waits 300 ms after typing. Incomplete UUIDs
+and UTC timestamps leave existing results intact with an explanatory status.
+Changing a filter or sort restarts pagination. Requests are cancelled/fenced so
+an older response cannot overwrite newer results; Cancel update restores the
+last applied controls/URL. Errors keep previous results and offer Retry. The
+URL preserves the applied view for reload, bookmarks and Back/Forward. Within
+the same browser tab, navigation and message-detail Back links remember each
+list's last applied URL via sessionStorage; no credentials or bodies are stored.
+
+Each page evaluates presence at its displayed server observation time. This is
+a live registry, not a frozen census: concurrent registrations, metadata changes
+or presence changes can move rows between pages. Refresh restarts the view.
+If the cursor anchor itself moved or was deleted, HTTP 409 asks you to restart
+instead of silently using an obsolete boundary. Cursors bind normalized filters,
+order and limit. SQL returns at most limit+1 candidates; safe name sorting can
+scan/sort matching registry rows in SQLite, without materializing the full list
+in application memory. Query-only label functions create no persisted dependency
+that could break database writes when the admin UI is disabled.
+
+## Appearance
+
+The header offers **System**, **Light** and **Dark**. System follows the operating
+system and reacts to changes; an explicit choice persists in localStorage across
+reloads. The CSP-hashed bootstrap applies it before the stylesheet is parsed to
+avoid a light-theme flash. If storage is unavailable, theme selection still works
+for the current page. Without JavaScript, CSS follows the system color scheme.
+No external fonts, analytics, assets or framework are loaded.
 
 Messages are ordered by accepted timestamp descending, then message ID descending.
 A durable monotonic history high-water mark from the shared message-history
@@ -95,6 +131,21 @@ actual HTTP handlers/cookies/forms as well as bounded data projections, duplicat
 names, multiple installations, expiry/closed/restart presence, filters and
 pagination, secret/path exclusion, escaping, missing/retained-content states and
 unauthenticated deep links. Existing approval/TLS tests remain applicable.
+
+For real Chromium interaction regressions against a disposable loopback broker,
+with Python Playwright 1.62.0 and its Chromium installed, run:
+
+```sh
+python scripts/admin-browser-smoke.py
+```
+
+`ADMIN_TEST_NODE` may select the pinned Node binary; `ADMIN_TEST_CHROMIUM` may
+select an already installed Chromium. `ADMIN_TEST_ARTIFACTS` selects a disposable
+screenshot directory. The script covers debounce/caret, history, explicit All,
+sort/paging, stale-response cancellation, error/retry, navigation, themes/storage
+failures, responsive layout, logout and no-JS fallback. CI runs it in the existing
+container job and retains only synthetic PNGs, never test cookies or fixture JSON.
+It is not a native connector/model acceptance test.
 
 For **synthetic static visual fixtures only**, run:
 

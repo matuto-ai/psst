@@ -5,6 +5,8 @@ import { presenceSnapshot } from './presence.mjs';
 const iso = value => new Date(value).toISOString();
 const invalid = field => { throw new ApiError(400, 'invalid_request', field); };
 const STATES = ['queued', 'claimed', 'delivered', 'expired', 'failed', 'cancelled'];
+const SESSION_NAME = "lower(coalesce(admin_public_label(json_extract(metadata,'$.name')),''))";
+const SESSION_SORTS = { name: SESSION_NAME, type: 'type', state: 'CASE WHEN closed=1 THEN 2 WHEN lease_until > ? THEN 0 ELSE 1 END', heartbeat: 'heartbeat_at' };
 const META_COLUMNS = 'id,sender,recipient,state,attempts,uncertain,accepted,expires,claimed_at,delivered_at,terminal_at';
 export const ADMIN_PAGE_BYTES = 65536;
 
@@ -20,8 +22,13 @@ export class AdminData {
   constructor(store, key = randomBytes(32)) {
     this.store = store;
     this.key = key;
+    // Query-only function: sorting/searching must obey exactly the visible label policy.
+    // Never reference this function in a persisted index/trigger: store writes must
+    // also work before an AdminData instance exists after reopening the database.
+    store.db.function('admin_public_label', { deterministic: true }, publicLabel);
     store.db.exec(`CREATE INDEX IF NOT EXISTS admin_sessions_adapter_id ON sessions(adapter,id);
       CREATE INDEX IF NOT EXISTS admin_sessions_type_id ON sessions(type,id);
+      CREATE INDEX IF NOT EXISTS admin_sessions_heartbeat_id ON sessions(heartbeat_at,id);
       CREATE INDEX IF NOT EXISTS admin_messages_order ON messages(accepted DESC,id DESC);
       CREATE INDEX IF NOT EXISTS admin_messages_sender_order ON messages(sender,accepted DESC,id DESC);
       CREATE INDEX IF NOT EXISTS admin_messages_recipient_order ON messages(recipient,accepted DESC,id DESC);`);
@@ -62,21 +69,52 @@ export class AdminData {
     return items;
   }
   sessions(params) {
-    const query = this.query(params, ['client_id', 'installation_id', 'client_type', 'state', 'limit', 'cursor']);
-    const filters = Object.fromEntries(['client_id', 'installation_id', 'client_type', 'state', 'limit'].map(k => [k, query[k] ?? '']));
+    const query = this.query(params, ['client_id', 'installation_id', 'client_type', 'state', 'name', 'sort', 'direction', 'limit', 'cursor']);
+    query.state ??= 'connected'; query.sort ??= 'name'; query.direction ??= 'asc'; query.limit ??= '10';
+    const filters = Object.fromEntries(['client_id', 'installation_id', 'client_type', 'state', 'name', 'sort', 'direction', 'limit'].map(k => [k, query[k] ?? '']));
     if (query.client_id) validateUuid(query.client_id, 'query.client_id');
     if (query.installation_id && !/^[-a-zA-Z0-9_.]{1,128}$/.test(query.installation_id)) invalid('query.installation_id');
     if (query.client_type && !TYPES.includes(query.client_type)) invalid('query.client_type');
-    if (query.state && !['connected', 'disconnected', 'closed'].includes(query.state)) invalid('query.state');
-    const limit = Number(query.limit ?? 10), cursor = this.cursor('sessions', filters, query.cursor), now = this.store.clock();
-    const where = ['id > ?'], values = [cursor?.after ?? ''];
+    if (!['all', 'connected', 'disconnected', 'closed'].includes(query.state)) invalid('query.state');
+    if (!Object.hasOwn(SESSION_SORTS, query.sort)) invalid('query.sort');
+    if (!['asc', 'desc'].includes(query.direction)) invalid('query.direction');
+    if (query.name && ([...query.name].length > 256 || /[\u0000-\u001f\u007f]/.test(query.name))) invalid('query.name');
+    const limit = Number(query.limit), cursor = this.cursor('sessions-sort', filters, query.cursor), now = this.store.clock();
+    const sort = SESSION_SORTS[query.sort], sortValues = query.sort === 'state' ? [now] : [];
+    const keyHash = value => createHmac('sha256', this.key).update(JSON.stringify(value)).digest('base64url');
+    let afterKey;
+    if (cursor) {
+      validateUuid(cursor.after, 'query.cursor');
+      // Resolve only the anchor, never encode optional/private labels in a readable cursor.
+      const anchor = this.store.db.prepare(`SELECT ${sort} AS sort_key FROM sessions WHERE id=?`).get(...sortValues, cursor.after);
+      if (!anchor || keyHash(anchor.sort_key) !== cursor.key_hash) {
+        throw new ApiError(409, 'registry_changed', 'query.cursor', {
+          message: 'The session at this page boundary changed.', action: 'Refresh the listing without a cursor to restart from the first page.',
+        });
+      }
+      afterKey = anchor.sort_key;
+    }
+    const where = ['1=1'], values = [...sortValues];
     for (const [key, column] of [['client_id', 'id'], ['installation_id', 'adapter'], ['client_type', 'type']]) {
       if (query[key]) { where.push(`${column} = ?`); values.push(query[key]); }
+    }
+    if (query.name) {
+      where.push(`${SESSION_NAME} LIKE ? ESCAPE '\\'`);
+      values.push(query.name.replace(/[\\%_]/g, '\\$&') + '%');
     }
     if (query.state === 'closed') where.push('closed = 1');
     if (query.state === 'connected') { where.push('closed = 0 AND lease_until > ?'); values.push(now); }
     if (query.state === 'disconnected') { where.push('closed = 0 AND lease_until <= ?'); values.push(now); }
-    const rows = this.store.db.prepare(`SELECT id,adapter,type,metadata,heartbeat_at,lease_until,closed FROM sessions WHERE ${where.join(' AND ')} ORDER BY id LIMIT ?`).all(...values, limit + 1);
+    const after = cursor ? `WHERE (sort_key ${query.direction === 'desc' ? '<' : '>'} ? OR (sort_key = ? AND id > ?))` : '';
+    if (cursor) values.push(afterKey, afterKey, cursor.after);
+    // This is a live registry, not a frozen census. Other sessions can join/leave or
+    // move between pages. Refresh restarts; the cursor only fixes filters and order.
+    // SQLite evaluates the chosen sort across candidates, but JavaScript receives
+    // at most limit+1 rows, never an in-memory copy of the whole registry.
+    const rows = this.store.db.prepare(`WITH candidates AS (
+      SELECT id,adapter,type,metadata,heartbeat_at,lease_until,closed,${sort} AS sort_key
+      FROM sessions WHERE ${where.join(' AND ')}
+    ) SELECT * FROM candidates ${after} ORDER BY sort_key ${query.direction.toUpperCase()},id ASC LIMIT ?`).all(...values, limit + 1);
     const clients = this.bounded(rows, row => {
       const metadata = JSON.parse(row.metadata);
       // Consume the same presence snapshot as discovery; only presentation hides epoch-zero leases.
@@ -85,7 +123,8 @@ export class AdminData {
         name: publicLabel(metadata.name), model: publicLabel(metadata.model?.id), model_provider: publicLabel(metadata.model?.provider), project: publicLabel(metadata.project),
         ...presence, lease_expires_at: row.lease_until > 0 ? presence.lease_expires_at : null };
     }, limit);
-    return { clients, next_cursor: rows.length > clients.length ? this.continuation('sessions', filters, { after: clients.at(-1).client_id, issued_at: cursor?.issued_at ?? now }) : null, server_time: iso(now), query, limit };
+    const last = rows[clients.length - 1];
+    return { clients, next_cursor: rows.length > clients.length ? this.continuation('sessions-sort', filters, { after: last.id, key_hash: keyHash(last.sort_key), issued_at: cursor?.issued_at ?? now }) : null, server_time: iso(now), query, limit };
   }
   metadata(row, now) {
     const state = ['queued', 'claimed'].includes(row.state) && row.expires <= now ? 'expired' : row.state;
