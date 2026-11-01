@@ -28,7 +28,7 @@ def main():
             browser = p.chromium.launch(**options)
             try:
                 context = browser.new_context(viewport={'width': 1440, 'height': 1050}, color_scheme='light')
-                context.add_cookies([{'name': 'psst_admin', 'value': config['cookie_value'], 'url': origin + '/admin', 'httpOnly': True, 'sameSite': 'Strict'}])
+                context.add_cookies([{'name': 'psst_admin', 'value': config['cookie_value'], 'domain': urlsplit(origin).hostname, 'path': '/admin', 'httpOnly': True, 'sameSite': 'Strict'}])
                 page = context.new_page()
                 errors = []
                 page.on('pageerror', lambda error: errors.append(str(error)))
@@ -49,6 +49,9 @@ def main():
                 page.add_init_script("document.addEventListener('DOMContentLoaded', () => window.__initialTheme = document.documentElement.dataset.theme, {once:true})")
                 page.reload()
                 expect(theme).to_have_value('dark')
+                expect(page.locator('[data-live-filters]')).to_have_attribute('data-enhanced', 'true')
+                cookies = [c for c in context.cookies(origin + '/admin') if c['name'] == 'psst_admin']
+                assert len(cookies) == 1 and cookies[0]['path'] == '/admin', 'Fixture cookie must match the product path so renewal cannot duplicate it'
                 assert page.evaluate('window.__initialTheme') == 'dark'
                 page.emulate_media(color_scheme='light')
                 expect(page.locator('html')).to_have_attribute('data-theme', 'dark')
@@ -211,7 +214,7 @@ def main():
                 assert not [e for e in errors if '503' not in e], errors
                 # Storage failures must not disable filters/theme (restricted/private environments).
                 storage = browser.new_context()
-                storage.add_cookies([{'name': 'psst_admin', 'value': config['fallback_cookie'], 'url': origin + '/admin', 'httpOnly': True, 'sameSite': 'Strict'}])
+                storage.add_cookies([{'name': 'psst_admin', 'value': config['fallback_cookie'], 'domain': urlsplit(origin).hostname, 'path': '/admin', 'httpOnly': True, 'sameSite': 'Strict'}])
                 storage.add_init_script("Object.defineProperty(window, 'localStorage', {get(){throw Error('blocked')}}); Object.defineProperty(window, 'sessionStorage', {get(){throw Error('blocked')}});")
                 restricted = storage.new_page()
                 restricted.goto(origin + '/admin/sessions')
@@ -223,7 +226,7 @@ def main():
                 storage.close()
                 # No-JS fallback keeps ordinary GET form, Connected default and system CSS.
                 nojs = browser.new_context(java_script_enabled=False)
-                nojs.add_cookies([{'name': 'psst_admin', 'value': config['fallback_cookie'], 'url': origin + '/admin', 'httpOnly': True, 'sameSite': 'Strict'}])
+                nojs.add_cookies([{'name': 'psst_admin', 'value': config['fallback_cookie'], 'domain': urlsplit(origin).hostname, 'path': '/admin', 'httpOnly': True, 'sameSite': 'Strict'}])
                 fallback = nojs.new_page()
                 fallback.goto(origin + '/admin/sessions')
                 expect(fallback.get_by_role('button', name='Apply filters')).to_be_visible()
