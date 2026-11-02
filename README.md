@@ -1,16 +1,24 @@
-# AI Agent Message Broker
+# Psst
 
 A generic, authenticated LAN message broker for independent AI CLI sessions. It owns the recipient registry, background presence, and durable **message delivery**—not conversations, tasks, model progress, or agent orchestration.
 
-**Status: development preview.** The broker core, reference adapter and local stdio facade are available for review in a draft PR. Real Pi, Antigravity CLI, Claude Code, and OpenCode receiving modes are separately gated; protocol fixtures are not evidence of real CLI compatibility.
+**Status: pre-1.0 development.** The broker implementation, reference adapter and local stdio facade are on `main`. Version 0.6.0 is a source candidate until its release workflow succeeds. Native Pi, Antigravity CLI, Claude Code and OpenCode installation and receiving behavior must be validated separately; protocol fixtures and CI are not evidence of acceptance in a user environment.
 
 ## Docker server
 
 Use the [Docker image / Compose and release guide](docs/docker-release.md). The server image starts without credentials for connectivity testing: HTTP port **8787**, persistent **`/data`**, public health only; every API stays denied until adapters are enrolled. Your existing HTTPS proxy and network configuration remain operator-owned. CI runs on every push/PR; a user-published GitHub Release gates image publication on the full suite. No image is published just by pushing this branch.
 
-## Scoped pairing (opt-in upgrade)
+## Native setup
 
-New source workflow: native setup asks only for the broker URL, followed by approval in the broker administration page. See [URL-only setup](docs/approval-operator.md) and the [approval contract](docs/approval-protocol.md). This requires broker0.4.0 after publication and compatible connector releases; it is not present in broker 0.3.0. Existing legacy bundles and ticket pairing remain compatible. Native automatic-receive acceptance is separately tested per connector.
+Native setup asks only for the broker URL, followed by approval in the broker administration page. See [URL-only setup](docs/approval-operator.md) and the [approval contract](docs/approval-protocol.md). This flow is available since broker 0.4.0 and requires a compatible connector; it is not present in broker 0.3.0. Existing legacy bundles and ticket pairing remain compatible. Native automatic-receive acceptance is separately tested per connector.
+
+## Optional session retention
+
+Version 0.6.0 adds registration-v2 support and schema-5 migration. Cleanup stays
+disabled by default; enabling the persistent v2 floor and disconnected-session
+retention requires a separate operator decision after connector recovery has been
+validated. Preserve existing data and authorization when upgrading. See the
+[rollout and backup requirements](docs/presence.md#optional-ephemeral-session-retention-registration-v2).
 
 ## Contract
 
@@ -23,13 +31,13 @@ New source workflow: native setup asks only for the broker URL, followed by appr
 
 `202 Accepted` means stored by the broker. `delivered` means committed to the exact recipient's durable adapter inbox, **not** read, injected into a harness, processed, or answered by a model. Plain text remains untrusted agent input.
 
-## Try the preview branch
+## Build from source
 
-`main` still holds the specification until this draft is reviewed. Clone the implementation branch explicitly:
+Clone the current repository for development. For an installation, prefer a successfully published versioned image from the release guide:
 
 ```sh
-git clone --branch feat/durable-broker-v1 --single-branch https://github.com/brunoorsolon/ai-agent-msg-broker.git
-cd ai-agent-msg-broker
+git clone https://github.com/matuto-ai/psst.git
+cd psst
 ```
 
 Use an isolated pinned runtime/container rather than upgrading a workstation's global Node. See [container instructions](docs/operations.md#container-review-and-rootless-podman-example).

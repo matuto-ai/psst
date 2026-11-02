@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.6.0 (source candidate; publish separately)
 
 - Add opt-in disconnected-session retention with registration-v2 freshness, a
   durable global fencing counter, and an explicit persistent v2 enforcement gate.
@@ -9,6 +9,15 @@
 - Add reference SDK v2 registration and explicit fresh-journal recovery after
   confirmed expiry. Native connector rollout and operator activation remain
   separate prerequisites; cleanup defaults off. Database schema advances to 5.
+
+- Remove provider from visible administrator session and message presentation while
+  retaining internal metadata and the existing authorization checks.
+
+The broker remains **Psst**; its repository and GHCR image names do not change.
+This source candidate does not publish or deploy anything. Publish a new `v0.6.0`
+release only after reviewing its exact commit and successful verification; do not
+reuse the already-published `v0.5.1` tag. Keep cleanup disabled until connector
+rollout and recovery are validated. See [release and migration instructions](docs/docker-release.md).
 
 ## 0.5.1 (source candidate; publish separately)
 
