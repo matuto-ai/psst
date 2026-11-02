@@ -188,3 +188,13 @@ test('admin cursor expiry, timestamp calendar validation and safe participant na
   assert.throws(() => data.messages(params({ accepted_after: '2026-02-30T00:00:00Z' })), e => e.status === 400);
   f.advance(900001); assert.throws(() => data.messages(params({ limit: '1', cursor: page.next_cursor })), e => e.status === 400);
 });
+
+ test('session presentation omits provider without mutating protocol metadata', async t => {
+  const f=await web(t);
+  register(f,f.a.entry,{metadata:{name:'metadata-display',project:'shared-project',model:{provider:'provider-hidden-sentinel',id:'visible-model',source:'observed'}}});
+  const page=await f.page('/admin/sessions');
+  assert.equal(page.status,200);assert(page.html.includes('visible-model'));assert(page.html.includes('shared-project'));
+  assert(!page.html.includes('provider-hidden-sentinel'));
+  const listed=new AdminData(f.store).sessions(new URLSearchParams());
+  assert.equal(listed.clients[0].model_provider,'provider-hidden-sentinel');
+ });
