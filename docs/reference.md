@@ -257,3 +257,25 @@ See [owned outgoing history](message-history.md) for bounded metadata listing an
 ## Hidden operation identity and lifecycle
 
 See [message lifecycle](message-lifecycle.md). Native hosts pass stable tool-call context internally; model schemas never require technical keys. Use `prepareResend` / `resendPrepared`, `cancelMessage` and bounded `recoverOutgoing` with the exact surviving session.
+
+## Registration v2 and expired-session replacement
+
+Pass `registrationVersion: 2` to `BrokerClient` to opt into the registration
+extension. Default remains 1. V2 persists the same timestamp/body across retries
+and accepts a globally increasing server epoch. It never silently changes an
+uncertain request into a fresh one, and does not automatically replace an identity.
+
+After `reconnect({ verifySession })` confirms the authorized broker identity is
+missing, it reports `session_expired`. The caller may explicitly call
+`createReplacementInbox({ directory, verifySession })`. This verifies the native
+session again, rechecks the missing identity, and requires a genuinely new
+private directory. It returns an empty `Inbox` with fresh UUIDs; the original
+journal remains untouched. Construct a new v2 `BrokerClient` with that inbox and
+bind it explicitly to the verified native session before resuming. No pending
+send, claim, completion or native-injection record is copied. A timeout, 401/403,
+active identity conflict or mismatched native session does not authorize rotation.
+A lost broker session does not prove that an old native delivery did not happen.
+
+Updating this reference implementation is not proof that any native connector
+already supports this rollout. Each connector must implement and test the explicit
+binding switch before server enforcement/cleanup is activated.

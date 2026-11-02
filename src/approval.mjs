@@ -11,7 +11,7 @@ export class ApprovalService {
   static async create(options) {
     const {store}=options;
     const version=store.db.prepare('PRAGMA user_version').get().user_version;
-    if(version<4){
+    if(!store.preApprovalBackup && (version<4 || !store.db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='approval_requests'").get())){
       const parent=dirname(store.path),dir=mkdtempSync(join(parent,'before-approval-'));
       chmodSync(dir,0o700);
       await backupDatabase(store.path,join(dir,'broker.sqlite'));
@@ -33,7 +33,7 @@ export class ApprovalService {
       CREATE TABLE IF NOT EXISTS admin_sessions (
       hash TEXT PRIMARY KEY, csrf TEXT NOT NULL, authenticated INTEGER NOT NULL,
       expires INTEGER NOT NULL, password_hash TEXT NOT NULL);
-      PRAGMA user_version=4;`));
+      PRAGMA user_version=${Math.max(4,store.db.prepare('PRAGMA user_version').get().user_version)};`));
   }
   proof(header){
     const m=typeof header==='string'&&/^Enrollment ([A-Za-z0-9_-]{43})$/.exec(header);

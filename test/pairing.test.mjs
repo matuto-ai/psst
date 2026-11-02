@@ -25,7 +25,7 @@ test('expired unconsumed ticket cannot issue; credential expiry stops retry/auth
  const s=setup(t);s.f.advance(600001);assert.throws(()=>s.redeem(),e=>e.code==='unauthenticated');
  const next=join(s.f.dir,'second.json');s.issue({outputFile:next,credentialDays:1});s.pair.pairing_secret=JSON.parse(readFileSync(next)).pairing_secret;
  s.redeem();s.f.advance(86400001);assert.throws(()=>s.redeem(),e=>e.code==='unauthenticated');assert.throws(()=>s.auth.authenticate(`Bearer ${s.token}`),e=>e.code==='unauthenticated');
- s.restart();assert.equal(s.f.store.db.prepare('PRAGMA user_version').get().user_version,3);
+ s.restart();assert.equal(s.f.store.db.prepare('PRAGMA user_version').get().user_version,5);
 });
 test('single-use race, token/enrollment collisions, invalid body and secret redaction',async t=>{
  const s=setup(t);const results=await Promise.allSettled([Promise.resolve().then(()=>s.redeem()),Promise.resolve().then(()=>s.redeem({...s.request,enrollment_id:randomUUID()}))]);
@@ -62,12 +62,12 @@ test('HTTP pairing authentication, rate bound, invalid origin/query and active l
  assert.equal((await call('/v1/enrollments',{})).status,429);
 });
 
-test('legacy schema2 stays unchanged when disabled; additive migration and backup retain consumed grants and messages',async t=>{
- const {BrokerStore}=await import('../src/store.mjs');const f=fixture(t);assert.equal(f.store.db.prepare('PRAGMA user_version').get().user_version,2);
+test('enrollment remains optional; current schema and backup retain consumed grants and messages',async t=>{
+ const {BrokerStore}=await import('../src/store.mjs');const f=fixture(t);assert.equal(f.store.db.prepare('PRAGMA user_version').get().user_version,5);
  const s=setup(t);const legacy=s.f.store.register(s.f.a.entry,registration());const issued=s.redeem();
  const path=join(s.f.dir,'backup.sqlite');await s.f.store.backup(path);
  const restored=new BrokerStore({path,clock:()=>s.f.now});t.after(()=>restored.close());const service=new EnrollmentService({store:restored,policyFile:s.policyFile});
- assert.equal(restored.db.prepare('PRAGMA user_version').get().user_version,3);assert.equal(restored.session(s.f.a.entry,legacy.client_id).client_id,legacy.client_id);
+ assert.equal(restored.db.prepare('PRAGMA user_version').get().user_version,5);assert.equal(restored.session(s.f.a.entry,legacy.client_id).client_id,legacy.client_id);
  const replay=service.redeem(`Pairing ${s.pair.pairing_secret}`,s.request);assert.equal(replay.status,200);assert.deepEqual(replay.result,issued.result);
  assert.equal(restored.db.prepare('SELECT count(*) n FROM enrolled_credentials').get().n,1);
 });

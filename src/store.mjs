@@ -1,10 +1,12 @@
 import { DatabaseSync, backup } from 'node:sqlite';
 import { PresenceService, presenceSnapshot } from './presence.mjs';
 import { randomUUID } from 'node:crypto';
-import { mkdirSync, chmodSync, statfsSync, statSync, realpathSync, lstatSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
+import { mkdirSync, mkdtempSync, writeFileSync, openSync, closeSync, fsyncSync, chmodSync, statfsSync, statSync, realpathSync, lstatSync } from 'node:fs';
+import { dirname, resolve, join } from 'node:path';
+import { backupDatabase } from '../scripts/backup.mjs';
 import { ApiError, DEFAULTS, canonical, digest, validateRegistration, validateMetadataPatch, validateSend, validateClaim, validateCompletion, validateRenew, validateIdempotencyKey, validateUuid, validateResend, validateOperationTime } from './protocol.mjs';
 
+const DEFER_MIGRATION = Symbol('defer-migration');
 const iso = n => new Date(n).toISOString();
 const parse = JSON.parse;
 const terminal = s => ['delivered', 'expired', 'failed', 'cancelled'].includes(s);
@@ -14,18 +16,42 @@ const intersects = (a, b) => a.some(x => b.includes(x));
 
 /** One synchronous writer. All state transitions run in BEGIN IMMEDIATE transactions. */
 export class BrokerStore {
-  constructor({ path, clock = Date.now, limits = {}, diskCheck, fault = () => {} }) {
+  /** Production startup: snapshot the original schema while holding its owner
+   * lock, before any migration or startup lease/claim rewriting. */
+  static async open(options) {
+    const store = new BrokerStore({...options,[DEFER_MIGRATION]:true});
+    try {
+      const version = store.db.prepare('PRAGMA user_version').get().user_version;
+      if(version > 0 && version < 5) {
+        const parent=dirname(store.path), prefix=version<4 ? 'before-approval-' : 'before-retention-';
+        const directory=mkdtempSync(join(parent,prefix));
+        chmodSync(directory,0o700);
+        await backupDatabase(store.path,join(directory,'broker.sqlite'));
+        writeFileSync(join(directory,'manifest.json'),JSON.stringify({database:store.path,schema:version,created_at:iso(store.clock())})+'\n',{flag:'wx',mode:0o600});
+        for(const path of [join(directory,'broker.sqlite'),join(directory,'manifest.json'),directory,parent]) {
+          const fd=openSync(path,'r');try{fsyncSync(fd);}finally{closeSync(fd);}
+        }
+        store.preApprovalBackup = version < 4;
+      }
+      store.initialize();
+      return store;
+    } catch(error) { try{store.close();}catch{} throw error; }
+  }
+  constructor({ path, clock = Date.now, limits = {}, diskCheck, fault = () => {}, requireRegistrationV2 = false, [DEFER_MIGRATION]: deferMigration = false }) {
+    if (typeof requireRegistrationV2 !== 'boolean') throw new Error('Invalid registration enforcement.');
+    this.requireRegistrationV2 = requireRegistrationV2;
     this.clock = clock;
     this.fault = fault;
     this.limits = { ...DEFAULTS, min_free_bytes: 64 * 1024 * 1024, max_disk_bytes: 1024 * 1024 * 1024,
-      principal_send_per_minute: 600, principal_send_burst: 100, global_send_per_minute: 6000, global_send_burst: 1000, max_polls: 1000, request_per_minute: 1200, ...limits };
-    const allowedLimits=new Set([...Object.keys(DEFAULTS),'min_free_bytes','max_disk_bytes','principal_send_per_minute','principal_send_burst','global_send_per_minute','global_send_burst','max_polls','request_per_minute']);
+      principal_send_per_minute: 600, principal_send_burst: 100, global_send_per_minute: 6000, global_send_burst: 1000, max_polls: 1000, request_per_minute: 1200, session_retention_seconds: 0, ...limits };
+    const allowedLimits=new Set([...Object.keys(DEFAULTS),'min_free_bytes','max_disk_bytes','principal_send_per_minute','principal_send_burst','global_send_per_minute','global_send_burst','max_polls','request_per_minute','session_retention_seconds']);
     if(Object.keys(limits).some(k=>!allowedLimits.has(k)))throw new Error('Unknown configured limit.');
     for (const [key, value] of Object.entries(this.limits)) {
-      if (!Number.isSafeInteger(value) || value <= 0) throw new Error(`Invalid finite limit: ${key}`);
+      if (!Number.isSafeInteger(value) || value < (key === 'session_retention_seconds' ? 0 : 1)) throw new Error(`Invalid finite limit: ${key}`);
     }
     if (this.limits.lease_seconds < 3 * this.limits.heartbeat_seconds) throw new Error('Lease must cover three heartbeat intervals.');
     const l=this.limits;
+    if(l.session_retention_seconds && l.session_retention_seconds <= l.registration_retention_seconds + 300) throw new Error('Session retention must exceed registration retry window plus clock allowance.');
     if(l.offline_notice_seconds>604800)throw new Error('Offline notice grace exceeds seven days.');
     if(l.retention_seconds<DEFAULTS.retention_seconds||l.registration_retention_seconds<DEFAULTS.registration_retention_seconds)throw new Error('Retention cannot be shorter than the v1 minimum.');
     if(l.min_ttl_seconds<60||l.max_ttl_seconds>604800||l.default_ttl_seconds<l.min_ttl_seconds||l.default_ttl_seconds>l.max_ttl_seconds||l.max_wait_seconds>30||l.max_message_bytes>65536||l.max_request_bytes>98304)throw new Error('Configured limits exceed the v1 wire bounds.');
@@ -55,22 +81,26 @@ export class BrokerStore {
       this.db = new DatabaseSync(this.path);
       chmodSync(this.path, 0o600);
       this.db.exec('PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=1000; PRAGMA trusted_schema=OFF;');
-      this.migrate();
-      this.presence = new PresenceService(this);
-      this.tx(() => {
-        this.db.exec('UPDATE sessions SET lease_until=0;');
-        this.db.exec("UPDATE messages SET state='queued', claim_id=NULL, claim_epoch=NULL, claim_until=NULL WHERE state='claimed';");
-      });
-      this.closed = false;
+      if(deferMigration) { this.closed=false; return; }
+      this.initialize();
     } catch (e) {
       try { this.db?.close(); } catch {}
       try { this.owner?.close(); } catch {}
       throw e;
     }
   }
+  initialize() {
+      this.migrate();
+      this.presence = new PresenceService(this);
+      this.tx(() => {
+        this.db.prepare(`UPDATE sessions SET disconnected_since=coalesce(disconnected_since,CASE WHEN lease_until>? OR lease_until<=0 THEN ? ELSE lease_until END),lease_until=0`).run(this.clock(),this.clock());
+        this.db.exec("UPDATE messages SET state='queued', claim_id=NULL, claim_epoch=NULL, claim_until=NULL WHERE state='claimed';");
+      });
+      this.closed = false;
+  }
   migrate() {
     const version = this.db.prepare('PRAGMA user_version').get().user_version;
-    if (version > 4) throw new Error('Unsupported database schema version.');
+    if (version > 5) throw new Error('Unsupported database schema version.');
     this.db.exec(`BEGIN IMMEDIATE;
       CREATE TABLE IF NOT EXISTS sessions (
         id TEXT PRIMARY KEY, principal TEXT NOT NULL, adapter TEXT NOT NULL, instance TEXT NOT NULL,
@@ -128,7 +158,19 @@ export class BrokerStore {
           UPDATE history_clock SET n=n+1 WHERE id=1;
           UPDATE messages SET history_order=(SELECT n FROM history_clock WHERE id=1) WHERE id=NEW.id;
         END;`);
-      this.db.exec(`PRAGMA user_version=${Math.max(version, 2)}; COMMIT`);
+      const sessionColumns = this.db.prepare('PRAGMA table_info(sessions)').all();
+      if(!sessionColumns.some(c=>c.name==='registration_version')) this.db.exec('ALTER TABLE sessions ADD COLUMN registration_version INTEGER NOT NULL DEFAULT 1');
+      if(!sessionColumns.some(c=>c.name==='disconnected_since')) {
+        this.db.exec('ALTER TABLE sessions ADD COLUMN disconnected_since INTEGER');
+        // Existing offline rows get a full grace period, never an upgrade purge.
+        this.db.prepare('UPDATE sessions SET disconnected_since=? WHERE lease_until<=?').run(this.clock(),this.clock());
+      }
+      this.db.exec(`CREATE TABLE IF NOT EXISTS registration_control(id INTEGER PRIMARY KEY CHECK(id=1),epoch INTEGER NOT NULL,enforced INTEGER NOT NULL);
+        INSERT OR IGNORE INTO registration_control VALUES(1,0,0);
+        UPDATE registration_control SET epoch=max(epoch,coalesce((SELECT max(epoch) FROM sessions),0));`);
+      if(this.requireRegistrationV2) this.db.exec('UPDATE registration_control SET enforced=1 WHERE id=1');
+      if(this.limits.session_retention_seconds && !this.db.prepare('SELECT enforced FROM registration_control WHERE id=1').get().enforced) throw new Error('Session cleanup requires explicit registration v2 enforcement.');
+      this.db.exec('PRAGMA user_version=5; COMMIT');
     }catch(e){this.db.exec('ROLLBACK');throw e;}
   }
   tx(fn) {
@@ -153,7 +195,7 @@ export class BrokerStore {
   safe() { try { return !this.closed && !this.poisoned && this.diskCheck(); } catch { return false; } }
   close() { if (this.closed) return; this.closed = true; this.db.close(); this.owner.close(); }
   async backup(destination) { await backup(this.db, destination); chmodSync(destination, 0o600); }
-  policy() { const l = this.limits; return { heartbeat_interval_seconds: l.heartbeat_seconds, lease_seconds: l.lease_seconds, claim_seconds: l.claim_seconds, retention_seconds: l.retention_seconds, registration_retry_seconds: l.registration_retention_seconds, send_retry_seconds: l.retry_window_seconds, offline_notice_seconds:l.offline_notice_seconds, resumable_disconnect:true, presence_events:true }; }
+  policy(version=2) { const l = this.limits; const extension = { registration_versions: this.db.prepare('SELECT enforced FROM registration_control WHERE id=1').get().enforced ? [2] : [1,2], session_retention_seconds: l.session_retention_seconds }; return { ...(version === 2 ? extension : {}), heartbeat_interval_seconds: l.heartbeat_seconds, lease_seconds: l.lease_seconds, claim_seconds: l.claim_seconds, retention_seconds: l.retention_seconds, registration_retry_seconds: l.registration_retention_seconds, send_retry_seconds: l.retry_window_seconds, offline_notice_seconds:l.offline_notice_seconds, resumable_disconnect:true, presence_events:true }; }
   own(auth, id) {
     const s = this.db.prepare('SELECT * FROM sessions WHERE id=?').get(id);
     if (!s || s.principal !== auth.principal_id || s.adapter !== auth.adapter_id || !auth.client_types.includes(s.type)) fail(404, 'recipient_not_found', 'headers.X-Client-ID');
@@ -166,12 +208,17 @@ export class BrokerStore {
     if (!Number.isSafeInteger(epoch) || s.epoch !== epoch || s.lease_until <= this.clock()) fail(409, 'stale_lease_epoch', 'headers.X-Lease-Epoch');
     return s;
   }
-  registrationResult(s, now=this.clock()) { return { client_id: s.id, lease_epoch: s.epoch, metadata_revision: s.revision, lease_expires_at: iso(s.lease_until), server_time: iso(now), policy: this.policy() }; }
+  registrationResult(s, now=this.clock()) { return { client_id: s.id, lease_epoch: s.epoch, metadata_revision: s.revision, lease_expires_at: iso(s.lease_until), server_time: iso(now), policy: this.policy(s.registration_version) }; }
   register(auth, input) {
     const b = validateRegistration(input), request = canonical(b), now = this.clock();
     if (!auth.client_types.includes(b.client_type)) fail(403, 'forbidden', 'client_type');
     return this.tx(() => {
+      const control = this.db.prepare('SELECT * FROM registration_control WHERE id=1').get();
+      const version = b.registration_version ?? 1;
+      if(control.enforced && version !== 2) fail(409,'registration_upgrade_required');
+      if(version === 2 && (b.requested_at > now + 300000 || now - b.requested_at >= this.limits.registration_retention_seconds * 1000)) fail(409,'retry_window_elapsed','requested_at');
       const old = this.db.prepare('SELECT * FROM sessions WHERE id=?').get(b.client_id);
+      if(old?.registration_version === 2 && version !== 2) fail(409,'registration_upgrade_required');
       if (old && (old.principal !== auth.principal_id || old.adapter !== auth.adapter_id || old.instance !== b.session_instance_id || old.type !== b.client_type)) fail(409, 'identity_conflict');
       const prior = this.db.prepare('SELECT * FROM registrations WHERE client=? AND connection=?').get(b.client_id,b.connection_id);
       if (prior) {
@@ -181,12 +228,19 @@ export class BrokerStore {
       }
       if (old?.closed) fail(410, 'session_closed');
       if ((old?.epoch ?? 0) !== b.previous_epoch) fail(409, 'stale_lease_epoch', 'previous_epoch');
+      // Bounded peer records still belong to the retired incarnation. Never let
+      // a new owner inherit their receipts/history or recipient sequence space.
+      if(!old && this.db.prepare('SELECT 1 FROM messages WHERE sender=? OR recipient=? LIMIT 1').get(b.client_id,b.client_id)) fail(409,'identity_conflict');
       const collision = this.db.prepare('SELECT id FROM sessions WHERE principal=? AND adapter=? AND instance=?').get(auth.principal_id, auth.adapter_id, b.session_instance_id);
       if (collision && collision.id !== b.client_id) fail(409, 'identity_conflict');
-      const epoch = b.previous_epoch + 1, revision = (old?.revision ?? 0) + 1;
+      const epoch = version === 2 ? Math.max(control.epoch,b.previous_epoch) + 1 : b.previous_epoch + 1;
+      if(!Number.isSafeInteger(epoch)) fail(503,'not_ready');
+      this.db.prepare('UPDATE registration_control SET epoch=max(epoch,?) WHERE id=1').run(epoch);
+      const revision = (old?.revision ?? 0) + 1;
       const values = [b.client_id, auth.principal_id, auth.adapter_id, b.session_instance_id, b.client_type, b.connection_id, epoch, now + this.limits.lease_seconds * 1000, now, canonical(b.metadata), revision, canonical(b.capabilities), canonical(auth.scopes), auth.credential_id];
       this.db.prepare(`INSERT INTO sessions(id,principal,adapter,instance,type,connection,epoch,lease_until,heartbeat_at,metadata,revision,capabilities,scopes,credential)
         VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET connection=excluded.connection,epoch=excluded.epoch,lease_until=excluded.lease_until,heartbeat_at=excluded.heartbeat_at,metadata=excluded.metadata,revision=excluded.revision,capabilities=excluded.capabilities,scopes=excluded.scopes,credential=excluded.credential`).run(...values);
+      this.db.prepare('UPDATE sessions SET registration_version=?,disconnected_since=NULL WHERE id=?').run(version,b.client_id);
       this.db.prepare('DELETE FROM session_disconnects WHERE session=?').run(b.client_id);
       this.db.prepare("UPDATE messages SET state='queued',claim_id=NULL,claim_epoch=NULL,claim_until=NULL WHERE recipient=? AND state='claimed'").run(b.client_id);
       const result = this.registrationResult(this.own(auth,b.client_id));
@@ -201,7 +255,7 @@ export class BrokerStore {
   heartbeat(auth, id, epoch) { return this.tx(() => {
     this.live(auth,id,epoch);
     const now = this.clock(), until = now + this.limits.lease_seconds*1000;
-    this.db.prepare('UPDATE sessions SET lease_until=?,heartbeat_at=?,credential=? WHERE id=?').run(until,now,auth.credential_id,id);
+    this.db.prepare('UPDATE sessions SET lease_until=?,heartbeat_at=?,credential=?,disconnected_since=NULL WHERE id=?').run(until,now,auth.credential_id,id);
     return {client_id:id,lease_epoch:epoch,lease_expires_at:iso(until),server_time:iso(now)};
   }); }
   disconnect(auth, id, epoch) { return this.tx(() => {
@@ -212,7 +266,7 @@ export class BrokerStore {
     // Idempotent for this attachment, but an old process cannot disconnect a
     // replacement epoch. Identity, mailbox and reconnect capability survive.
     const now = this.clock();
-    this.db.prepare('UPDATE sessions SET lease_until=min(lease_until,?) WHERE id=?').run(now, id);
+    this.db.prepare('UPDATE sessions SET disconnected_since=coalesce(disconnected_since,min(lease_until,?)),lease_until=min(lease_until,?) WHERE id=?').run(now,now,id);
     // Only ending a live lease mints later terminal-close authority. Retrying an
     // already marked epoch preserves it; an ordinary expired lease gains none.
     if(s.lease_until>now)this.db.prepare('INSERT INTO session_disconnects(session,epoch) VALUES(?,?) ON CONFLICT(session) DO UPDATE SET epoch=excluded.epoch').run(id,epoch);
@@ -246,7 +300,7 @@ export class BrokerStore {
   }); }
   revoke(credentials) {
     if (!credentials.length) return;
-    this.tx(()=>{for(const id of credentials) this.db.prepare('UPDATE sessions SET lease_until=0 WHERE credential=?').run(id);});
+    this.tx(()=>{for(const id of credentials) this.db.prepare('UPDATE sessions SET disconnected_since=coalesce(disconnected_since,?),lease_until=0 WHERE credential=?').run(this.clock(),id);});
   }
   applyAuthorizationPolicies(entries) {
     this.tx(()=>{
@@ -254,7 +308,7 @@ export class BrokerStore {
         const active=entries.filter(c=>c.principal_id===s.principal&&c.adapter_id===s.adapter&&c.client_types.includes(s.type));
         // Policy reload may remove access, but never silently grants a session new scopes.
         const scopes=parse(s.scopes).filter(scope=>active.some(c=>c.scopes.includes(scope)));
-        if(canonical(scopes)!==s.scopes)this.db.prepare('UPDATE sessions SET scopes=?,lease_until=0 WHERE id=?').run(canonical(scopes),s.id);
+        if(canonical(scopes)!==s.scopes)this.db.prepare('UPDATE sessions SET scopes=?,disconnected_since=coalesce(disconnected_since,?),lease_until=0 WHERE id=?').run(canonical(scopes),this.clock(),s.id);
       }
     });
   }
@@ -284,7 +338,7 @@ export class BrokerStore {
     const existing=this.db.prepare('SELECT * FROM sends WHERE principal=? AND sender=? AND key=?').get(auth.principal_id,id,key);
     if(existing){
       if(!auth.scopes.includes(existing.scope)) fail(403,'forbidden');
-      if(existing.request!==request) fail(409,'idempotency_conflict','headers.Idempotency-Key');
+      if(existing.request!==request && existing.request!==`sha256:${digest(request)}`) fail(409,'idempotency_conflict','headers.Idempotency-Key');
       return Object.defineProperty(parse(existing.result),'_replayed',{value:true});
     }
     return null;
@@ -345,13 +399,13 @@ export class BrokerStore {
       this.db.prepare('UPDATE sessions SET next_sequence=? WHERE id=?').run(sequence,recipient.id);
       this.db.prepare("INSERT INTO messages(id,sender,recipient,scope,sequence,envelope,bytes,state,accepted,expires,resent_from) VALUES(?,?,?,?,?,?,?,'queued',?,?,?)").run(messageId,id,recipient.id,scope,sequence,canonical(envelope),bytes,now,expires,resentFrom??null);
       const result={message_id:messageId,recipient_sequence:sequence,delivery_state:'queued',recipient_connected_at_acceptance:recipient.lease_until>now,expires_at:iso(expires),status_url:`/v1/messages/${messageId}`,server_time:iso(now),...(resentFrom?{resent_from_message_id:resentFrom}:{})};
-      this.db.prepare('INSERT INTO sends VALUES(?,?,?,?,?,?,?)').run(auth.principal_id,id,key,request,messageId,scope,canonical(result));
+      this.db.prepare('INSERT INTO sends VALUES(?,?,?,?,?,?,?)').run(auth.principal_id,id,key,sender.registration_version === 2 ? `sha256:${digest(request)}` : request,messageId,scope,canonical(result));
       return result;
   }
   receiptRow(m) {return {message_id:m.id,recipient_id:m.recipient,recipient_sequence:m.sequence,delivery_state:m.state,attempt_count:m.attempts,reason:m.reason,delivery_uncertain:!!m.uncertain,accepted_at:iso(m.accepted),expires_at:iso(m.expires),claimed_at:m.claimed_at===null?null:iso(m.claimed_at),delivered_at:m.delivered_at===null?null:iso(m.delivered_at),terminal_at:m.terminal_at===null?null:iso(m.terminal_at),server_time:iso(this.clock()),...(m.resent_from?{resent_from_message_id:m.resent_from}:{}),...(m.cancelled_at!==null&&m.cancelled_at!==undefined?{cancelled_at:iso(m.cancelled_at)}:{})};}
   receipt(auth,client,id) {
     this.own(auth,client);
-    this.sweep();
+    this.tx(()=>this.sweepInternal());
     let m=this.db.prepare('SELECT * FROM messages WHERE id=?').get(id);
     if(!m||![m.sender,m.recipient].includes(client)||!auth.scopes.includes(m.scope)) fail(404,'message_not_found');
     if(!terminal(m.state)&&m.expires<=this.clock()){
@@ -367,7 +421,7 @@ export class BrokerStore {
     return m;
   }
   messageContent(auth,client,id) {
-    this.sweep();
+    this.tx(()=>this.sweepInternal());
     const m=this.ownedMessage(auth,client,id);
     if(!m.envelope) fail(410,'content_unavailable');
     return {sender_id:m.sender,...this.receiptRow(m),envelope:parse(m.envelope)};
@@ -390,7 +444,7 @@ export class BrokerStore {
       filter[key]=n;
     }
     if(filter.accepted_after!==undefined&&filter.accepted_before!==undefined&&filter.accepted_after>=filter.accepted_before) fail(400,'invalid_request','query');
-    this.sweep();
+    this.tx(()=>this.sweepInternal());
     const fingerprint=digest({client,filter,scopes:[...auth.scopes].sort()}), revision=this.db.prepare('SELECT revision FROM history_revisions WHERE sender=?').get(client)?.revision??0;
     const stateRevision=filter.status?(this.db.prepare('SELECT revision FROM history_state_revisions WHERE sender=? AND state=?').get(client,filter.status)?.revision??0):0;
     let cursor;
@@ -439,8 +493,38 @@ export class BrokerStore {
     this.db.prepare('DELETE FROM claims WHERE rowid IN (SELECT rowid FROM claims WHERE created<? LIMIT ?)').run(now-(this.limits.max_ttl_seconds+this.limits.retention_seconds)*1000,batch);
     this.db.prepare('DELETE FROM completions WHERE rowid IN (SELECT rowid FROM completions WHERE created<? LIMIT ?)').run(now-(this.limits.max_ttl_seconds+this.limits.retention_seconds)*1000,batch);
     this.presence?.sweep(batch);
+    // Also run when session cleanup is later disabled: deletion triggers must
+    // not leave permanent revision rows for identities already retired.
+    for(const table of ['history_revisions','history_state_revisions']) this.db.prepare(`DELETE FROM ${table} WHERE rowid IN (SELECT rowid FROM ${table} WHERE sender NOT IN (SELECT id FROM sessions) AND sender NOT IN (SELECT sender FROM messages) LIMIT ?)`).run(batch);
   }
-  sweep() {return this.tx(()=>this.sweepInternal());}
+  retireDisconnected(batch=1) {
+    if(!this.limits.session_retention_seconds) return;
+    const now=this.clock(), db=this.db;
+    db.prepare('UPDATE sessions SET disconnected_since=lease_until WHERE closed=0 AND disconnected_since IS NULL AND lease_until<=?').run(now);
+    const rows=db.prepare('SELECT id FROM sessions WHERE closed=0 AND registration_version=2 AND lease_until<=? AND disconnected_since<=? ORDER BY disconnected_since,id LIMIT ?').all(now,now-this.limits.session_retention_seconds*1000,batch);
+    for(const {id} of rows) {
+      // Retain peer receipts/idempotency, not private incoming content. Claims
+      // for this vanished receiver can never be completed with a valid lease.
+      db.prepare("UPDATE messages SET state='failed',reason='recipient_expired',terminal_at=?,claim_id=NULL,claim_epoch=NULL,claim_until=NULL WHERE recipient=? AND state IN ('queued','claimed')").run(now,id);
+      db.prepare('UPDATE messages SET envelope=NULL,bytes=0 WHERE recipient=?').run(id);
+      for(const entry of db.prepare('SELECT principal,sender,key,request FROM sends WHERE message IN (SELECT id FROM messages WHERE recipient=?)').iterate(id)) {
+        if(!entry.request.startsWith('sha256:')) db.prepare('UPDATE sends SET request=? WHERE principal=? AND sender=? AND key=?').run(`sha256:${digest(entry.request)}`,entry.principal,entry.sender,entry.key);
+      }
+      db.prepare('DELETE FROM registrations WHERE client=?').run(id);
+      db.prepare('DELETE FROM claims WHERE client=?').run(id);
+      db.prepare('DELETE FROM completions WHERE client=?').run(id);
+      db.prepare('DELETE FROM session_disconnects WHERE session=?').run(id);
+      db.prepare('DELETE FROM presence_events WHERE sender=? OR recipient=?').run(id,id);
+      db.prepare('DELETE FROM rates WHERE id=?').run(`sender:${id}`);
+      db.prepare('DELETE FROM sessions WHERE id=?').run(id);
+    }
+    // Remove revisions without peer records immediately; later message cleanup
+    // handles the remaining bounded records even if retirement is disabled.
+    for(const {id} of rows) if(!db.prepare('SELECT 1 FROM messages WHERE sender=? LIMIT 1').get(id)) for(const table of ['history_revisions','history_state_revisions']) db.prepare(`DELETE FROM ${table} WHERE sender=?`).run(id);
+  }
+  // Retirement only runs at the explicit periodic sweep boundary, never midway
+  // through a request that already resolved a sender/recipient row.
+  sweep() {return this.tx(()=>{this.sweepInternal();this.retireDisconnected();});}
   claim(auth,id,epoch,key,input,{finalizeEmpty=true}={}) {
     const b=validateClaim(input,{limits:this.limits});validateIdempotencyKey(key);const request=canonical(b);
     return this.tx(()=>{

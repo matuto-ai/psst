@@ -1,6 +1,7 @@
 /** Local errors deliberately never include content, paths, credentials or native responses. */
 const MESSAGES = {
   invalid_configuration: 'Correct the local adapter configuration before retrying.',
+  session_expired: 'This broker identity is no longer available. Verify the native session and explicitly create a fresh journal; never replay old pending work.',
   session_mismatch: 'Verify the exact surviving harness session; do not adopt its mailbox.',
   owner_conflict: 'Another worker owns this session inbox. Stop it before starting another.',
   storage_unavailable: 'Restore local durable storage before retrying.',
