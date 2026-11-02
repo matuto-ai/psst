@@ -59,8 +59,8 @@ export class InputScheduler {
 /** Session-scoped transport: no model, native submit, approval, terminal or task APIs. */
 export class AdapterRuntime {
   constructor({ client, inbox = client?.inbox, verifySession, isAlive, sleep = delay,
-    random = Math.random, onDiagnostic = () => {}, receiveEnabled = true }) {
-    if (!client || !inbox || typeof verifySession !== 'function' || typeof isAlive !== 'function') throw new LocalError('invalid_configuration');
+    random = Math.random, onDiagnostic = () => {}, receiveEnabled = true, closeOnLostSession = true }) {
+    if (!client || !inbox || typeof verifySession !== 'function' || typeof isAlive !== 'function' || typeof closeOnLostSession !== 'boolean') throw new LocalError('invalid_configuration');
     this.client = client;
     this.inbox = inbox;
     this.verifySession = verifySession;
@@ -69,6 +69,7 @@ export class AdapterRuntime {
     this.random = random;
     this.onDiagnostic = onDiagnostic;
     this.receiveEnabled = receiveEnabled;
+    this.closeOnLostSession = closeOnLostSession;
     this.controller = null;
     this.loops = [];
     this.receiving = false;
@@ -104,7 +105,7 @@ export class AdapterRuntime {
       this.controller?.abort();
       // Do not await our own loop from inside that loop. Shutdown drains all
       // attachment work before closing, including a reconnect in the other loop.
-      void this.stop().catch(error => this.diagnostic(error.code ?? 'close_failed'));
+      void this.stop({ closeSession: this.closeOnLostSession }).catch(error => this.diagnostic(error.code ?? 'close_failed'));
       return false;
     }
     return true;
@@ -153,22 +154,31 @@ export class AdapterRuntime {
     } finally { this.receiving = false; }
   }
 
-  async handleTransportError(error, signal) {
+  async handleTransportError(error, signal, { ownedSessionOperation = false } = {}) {
     if (this.closed || signal?.aborted) return false;
     this.diagnostic(error.code ?? 'transport_error');
-    if (error.code === 'stale_lease_epoch') {
+    const missingOwnV2Session = this.client.registrationVersion === 2 && ownedSessionOperation
+      && error.status === 404 && error.code === 'recipient_not_found';
+    if (error.code === 'stale_lease_epoch' || missingOwnV2Session) {
       try {
         await this.trackAttachment(attachmentSignal => this.client.reconnect({ verifySession: this.verifySession, signal: attachmentSignal }));
         return !this.closed && !signal?.aborted;
       }
-      catch (reconnectError) { this.diagnostic(reconnectError.code ?? 'reconnect_failed'); this.paused = true; return false; }
+      catch (reconnectError) {
+        this.diagnostic(reconnectError.code ?? 'reconnect_failed');
+        this.paused = true;
+        // Confirmed expiry ends both transport loops, not just the one that
+        // observed404. Native replacement is an explicit separate operation.
+        if (reconnectError.code === 'session_expired') this.controller?.abort();
+        return false;
+      }
     }
     if (error.code === 'claim_conflict' || error.code === 'message_expired') {
       // A definitive rejection establishes that the prior transport claim is unusable.
       this.inbox.setState('claim_pending', null);
       return true;
     }
-    if (['unauthenticated', 'forbidden', 'session_closed', 'session_mismatch', 'invalid_response', 'retry_window_elapsed'].includes(error.code)) {
+    if (['unauthenticated', 'forbidden', 'session_closed', 'session_expired', 'registration_upgrade_required', 'session_mismatch', 'invalid_response', 'retry_window_elapsed'].includes(error.code)) {
       this.paused = true;
       return false;
     }
@@ -233,7 +243,7 @@ export class AdapterRuntime {
           await this.sleep(this.heartbeatDelayMs(), undefined, { signal });
           if (!await this.heartbeatOnce({ signal })) break;
         } catch (error) {
-          if (!await this.handleTransportError(error, signal)) break;
+          if (!await this.handleTransportError(error, signal, { ownedSessionOperation: true })) break;
         }
       }
     };
@@ -247,7 +257,7 @@ export class AdapterRuntime {
           const result = await this.receiveOnce({ signal });
           if (result?.backpressure) await this.sleep(1000 + this.random() * 1000, undefined, { signal });
         } catch (error) {
-          if (!await this.handleTransportError(error, signal)) break;
+          if (!await this.handleTransportError(error, signal, { ownedSessionOperation: true })) break;
           try { await this.sleep(1000 + this.random() * 1000, undefined, { signal }); } catch { break; }
         }
       }
