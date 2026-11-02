@@ -1,6 +1,6 @@
 services:
   broker:
-    image: ${BROKER_IMAGE:-ghcr.io/matuto-ai/psst:0.5.0}
+    image: ${BROKER_IMAGE:-ghcr.io/matuto-ai/psst:0.5.1}
     environment:
       PSST_ADMIN_PASSWORD: ${PSST_ADMIN_PASSWORD:-}
       PSST_PUBLIC_ORIGIN: ${PSST_PUBLIC_ORIGIN:-}

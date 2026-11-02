@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.5.1 (source candidate; publish separately)
+
+- Refine the administrator console into a compact, restrained interface with
+  persisted Light / Dark / System appearance and accessible mobile controls.
+- Update GET filters automatically: immediate selectors, debounced text, retained
+  focus, applied URLs and history, stale-request cancellation and recoverable
+  errors. Ordinary form submission remains available without JavaScript.
+- Default session browsing to Connected and visible name ascending; provide
+  explicit All and sortable name, type, transport and heartbeat columns. Keep
+  exact identities and presence help available in expandable controls.
+- Keep message metadata newest-first/default 10 and load content only by explicit
+  detail. Preserve approval actions, authentication, cookies, origin and CSRF.
+- Add actual Chromium interaction regressions and synthetic responsive screenshots
+  to the existing CI job, including themes, request races and no-JS fallback.
+
+This is an admin-only update from 0.5.0: no broker protocol, reference SDK or
+schema change, and no connector upgrade or re-enrollment is required. Existing
+configuration, database, credentials and private HTTPS proxy remain in place.
+The source commit does not publish or deploy an image. The operator must publish
+`v0.5.1` and wait for its successful Release image workflow before selecting
+`ghcr.io/matuto-ai/psst:0.5.1`. Earlier 0.5.0 upgrade/verification boundaries below
+still apply; this UI work does not complete native unsolicited event consumers.
+
 ## 0.5.0 (source candidate; publish separately)
 
 - Split the administrator console into Clients & sessions, Messages and Approvals

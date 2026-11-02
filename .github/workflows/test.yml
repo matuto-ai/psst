@@ -59,6 +59,21 @@ jobs:
           sudo apt-get install --no-install-recommends -y libnss3-tools
           echo "$RUNNER_TEMP/approval-browser/bin" >> "$GITHUB_PATH"
           "$RUNNER_TEMP/approval-browser/bin/python" scripts/approval-browser-retry-test.py
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '24.19.0'
+      - name: Verify dynamic admin filters and themes in actual Chromium
+        run: python scripts/admin-browser-smoke.py
+        env:
+          ADMIN_TEST_ARTIFACTS: ${{ runner.temp }}/admin-browser
+      - name: Keep synthetic admin browser evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: admin-browser
+          path: ${{ runner.temp }}/admin-browser/*.png
+          if-no-files-found: warn
+          retention-days: 7
       - name: Check out immutable pre-approval broker for real schema3 migration
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
