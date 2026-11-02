@@ -23,7 +23,7 @@ async function setup(t,{pendingMs,credentialMs}={}){
 const candidate=()=>({token:randomBytes(32).toString('base64url'),body:{request_id:randomUUID(),client_type:'pi',label:'Synthetic installation'}});
 test('approval gates all access, exact replay, denial, expiry, revocation and backup',async t=>{
  const s=await setup(t,{pendingMs:1000,credentialMs:2000}),c=candidate(),header=`Enrollment ${c.token}`;
- assert.equal(s.store.db.prepare('PRAGMA user_version').get().user_version,4);
+ assert.equal(s.store.db.prepare('PRAGMA user_version').get().user_version,5);
  assert.equal(readdirSync(s.dir).filter(n=>n.startsWith('before-approval-')).length,1);
  assert.equal(s.approval.request(header,c.body).status,201);
  assert.equal(s.approval.request(header,c.body).status,200);
@@ -86,7 +86,7 @@ test('legacy ticket and pending approval reserve hashes reciprocally, including 
  const policyFile=join(s.dir,'policy.json'),key=randomBytes(32).toString('base64url'),legacyToken=randomBytes(32).toString('base64url');
  const policy={format:'psst-enrollment-policy-v1',grants:[{grant_id:'synthetic-grant',secret_sha256:secretHash(key),principal_id:'owner',client_type:'pi',scopes:['psst'],expires_at:new Date(Date.now()+600000).toISOString(),credential_expires_at:new Date(Date.now()+3600000).toISOString()}],revoked_credentials:[]};
  writeFileSync(policyFile,JSON.stringify(policy),{mode:0o600});const legacy=new EnrollmentService({store:s.store,policyFile});
- assert.equal(s.store.db.prepare('PRAGMA user_version').get().user_version,4);
+ assert.equal(s.store.db.prepare('PRAGMA user_version').get().user_version,5);
  const issued=legacy.redeem(`Pairing ${key}`,{enrollment_id:randomUUID(),client_type:'pi',token_sha256:secretHash(legacyToken)});
  policy.revoked_credentials.push(issued.result.credential_id);writeFileSync(policyFile,JSON.stringify(policy));assert.equal(legacy.credentials().length,0);
  assert.throws(()=>s.approval.request(`Enrollment ${legacyToken}`,candidate().body,legacy.reservations()),e=>e.status===409);

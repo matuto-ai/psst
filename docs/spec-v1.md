@@ -490,3 +490,13 @@ See [owned outgoing history](message-history.md) for bounded metadata listing an
 ## Explicit resend and cancellation
 
 See [message lifecycle](message-lifecycle.md) for internal recovery, bounded retry windows, explicit resend, cancellation races and compatibility.
+
+
+## Optional registration-v2 extension
+
+Message/envelope `protocol_version` remains `1`. Implementations opting into
+`registration_version: 2` use immutable `requested_at` and accept a broker-issued
+lease epoch strictly greater than `previous_epoch`, not necessarily exactly one
+greater. See [ephemeral retention and migration](presence.md#optional-ephemeral-session-retention-registration-v2)
+for freshness, persisted enforcement, bounded peer-data retention and restore
+constraints. V1 registrations and wire policy remain unchanged by default.

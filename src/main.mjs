@@ -12,12 +12,12 @@ if(!configFile){console.error('Set BROKER_CONFIG_FILE to a private operator conf
 let store,app;
 try{
   const config=JSON.parse(readFileSync(configFile,'utf8'));
-  const allowed=['database','credential_file','host','port','insecure_development','proxy_loopback','proxy_transport','tls','limits','enrollment_policy_file'];
+  const allowed=['database','credential_file','host','port','insecure_development','proxy_loopback','proxy_transport','tls','limits','enrollment_policy_file','require_registration_v2'];
   if(Object.keys(config).some(k=>!allowed.includes(k)))throw new Error('Unknown broker configuration field.');
   if(typeof config.database!=='string'||typeof config.credential_file!=='string')throw new Error('Database and credential_file are required.');
   const password=process.env.PSST_ADMIN_PASSWORD;
   if(password!==undefined&&password!==''&&(password.length<16||password.length>1024))throw new Error('Invalid administrator password configuration.');
-  store=new BrokerStore({path:config.database,limits:config.limits});
+  store=new BrokerStore({path:config.database,limits:config.limits,requireRegistrationV2:config.require_registration_v2});
   const enrollment=config.enrollment_policy_file===undefined?undefined:new EnrollmentService({store,policyFile:config.enrollment_policy_file});
   const approval=password?await ApprovalService.create({store}):undefined;
   const auth=new CredentialStore({path:config.credential_file,additionalCredentials:()=>[...(enrollment?.credentials()??[]),...(approval?.credentials()??[])],onRevoke:ids=>store.revoke(ids),onPolicyChange:entries=>store.applyAuthorizationPolicies(entries)});

@@ -215,10 +215,10 @@ test('negative ACK resolves only its own uncertainty, retaining earlier unconfir
  assert.equal(result.delivery_uncertain,true);
 });
 
-test('v1 to v2 migration preserves pending mail, epoch identities and idempotency records',t=>{
+test('v1 to current schema migration preserves pending mail, epoch identities and idempotency records',t=>{
  const f=fixture(t),[a,b]=pair(f),sent=f.store.send(f.a.entry,a.client_id,1,'migrate',sendBody(b.client_id));
  f.store.db.exec('ALTER TABLE messages DROP COLUMN claim_prior_uncertain; PRAGMA user_version=1;');f.restart();
- assert.equal(f.store.db.prepare('PRAGMA user_version').get().user_version,2);
+ assert.equal(f.store.db.prepare('PRAGMA user_version').get().user_version,5);
  assert.equal(f.store.receipt(f.a.entry,a.client_id,sent.message_id).delivery_state,'queued');
  f.store.register(f.a.entry,{...a,previous_epoch:1,connection_id:uuid()});
  assert.equal(f.store.send(f.a.entry,a.client_id,2,'migrate',sendBody(b.client_id)).message_id,sent.message_id);

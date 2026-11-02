@@ -1,15 +1,16 @@
 import { request as httpRequest } from 'node:http';
 import { request as httpsRequest } from 'node:https';
-import { readFileSync, openSync, fstatSync, closeSync, constants } from 'node:fs';
+import { mkdirSync, readFileSync, openSync, fstatSync, closeSync, constants } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
 import { ApiError, canonical, validateMetadata, validateRegistration, validateMetadataPatch,
   validateClaim, validateCompletion, validateRenew, validateUuid } from '../src/protocol.mjs';
 import { LocalError } from './errors.mjs';
+import { Inbox, newSessionIdentity } from './inbox.mjs';
 
 const ALLOWED_ERROR_CODES = new Set(['invalid_request', 'unauthenticated', 'forbidden', 'recipient_not_found',
   'message_not_found', 'history_changed', 'content_unavailable', 'retry_window_elapsed', 'identity_conflict', 'stale_lease_epoch', 'idempotency_conflict', 'metadata_conflict',
-  'claim_conflict', 'session_closed', 'message_expired', 'payload_too_large',
+  'claim_conflict', 'registration_upgrade_required', 'session_closed', 'message_expired', 'payload_too_large',
   'incompatible_receiver_transport', 'receiving_disabled', 'rate_limited', 'mailbox_full',
   'storage_unavailable', 'not_ready']);
 
@@ -56,7 +57,7 @@ function positiveSeconds(value, fallback) {
 export class BrokerClient {
   constructor({ url, tokenFile, tokenEnvironment, caFile, insecureDevelopment = false, inbox,
     now = Date.now, random = Math.random, sleep = delay, maxAttempts = 4,
-    maxResponseBytes = 256 * 1024, requestTimeoutMs = 40000 }) {
+    maxResponseBytes = 256 * 1024, requestTimeoutMs = 40000, registrationVersion = 1 }) {
     try { this.base = new URL(url); } catch { throw new LocalError('invalid_configuration', { field: 'url' }); }
     const host = this.base.hostname.replace(/^\[|\]$/g, '');
     if (this.base.username || this.base.password || this.base.search || this.base.hash || this.base.pathname !== '/'
@@ -68,6 +69,9 @@ export class BrokerClient {
       || !Number.isSafeInteger(maxAttempts) || maxAttempts < 1 || maxAttempts > 10
       || !Number.isSafeInteger(maxResponseBytes) || maxResponseBytes < 1024 || maxResponseBytes > 1048576
       || !Number.isSafeInteger(requestTimeoutMs) || requestTimeoutMs < 100 || requestTimeoutMs > 120000) throw new LocalError('invalid_configuration');
+    if (![1,2].includes(registrationVersion)) throw new LocalError('invalid_configuration');
+    this.registrationVersion = registrationVersion;
+    this.expiredIdentityConfirmed = false;
     this.inbox = inbox;
     this.now = now;
     this.random = random;
@@ -180,7 +184,7 @@ export class BrokerClient {
 
   applyRegistration(result, pending) {
     if (!result || result.client_id !== this.identity.client_id || !Number.isSafeInteger(result.lease_epoch)
-      || result.lease_epoch !== pending.body.previous_epoch + 1 || !Number.isSafeInteger(result.metadata_revision)
+      || ((pending.body.registration_version ?? 1) === 2 ? result.lease_epoch <= pending.body.previous_epoch : result.lease_epoch !== pending.body.previous_epoch + 1) || !Number.isSafeInteger(result.metadata_revision)
       || result.metadata_revision < 1 || !result.policy) throw new LocalError('invalid_response', { effect: 'unknown' });
     this.inbox.setState('attachment', { ...this.attachment, ...result, connection_id: pending.body.connection_id });
     this.inbox.setState('metadata', pending.body.metadata);
@@ -193,6 +197,7 @@ export class BrokerClient {
     let pending = this.inbox.getState('registration_pending');
     if (!pending) {
       const body = validateRegistration({ protocol_version: '1', ...this.identity, connection_id: randomUUID(),
+        ...(this.registrationVersion === 2 ? { registration_version: 2, requested_at: this.serverNow() } : {}),
         previous_epoch: this.attachment.lease_epoch ?? 0, metadata: validateMetadata(metadata), capabilities: this.capabilities(receiveEnabled) });
       pending = { body, retry_until: this.now() + positiveSeconds(this.policy.registration_retry_seconds, 86400) * 1000 };
       this.inbox.setState('registration_pending', pending);
@@ -221,7 +226,15 @@ export class BrokerClient {
     if (typeof verifySession !== 'function' || await verifySession(this.identity) !== true) throw new LocalError('session_mismatch');
     const local = this.attachment;
     const pending = this.inbox.getState('registration_pending');
-    const state = await this.request('GET', `/v1/sessions/${this.identity.client_id}`, { session: false, idempotent: true, signal });
+    let state;
+    try { state = await this.request('GET', `/v1/sessions/${this.identity.client_id}`, { session: false, idempotent: true, signal }); }
+    catch(error) {
+      if(this.registrationVersion === 2 && error instanceof BrokerError && error.status === 404 && error.code === 'recipient_not_found') {
+        this.expiredIdentityConfirmed = true;
+        throw new LocalError('session_expired');
+      }
+      throw error;
+    }
     if (state.client_id !== this.identity.client_id || state.session_instance_id !== this.identity.session_instance_id
       || state.client_type !== this.identity.client_type || !Number.isSafeInteger(state.lease_epoch)
       || ![local.connection_id, pending?.body.connection_id].filter(Boolean).includes(state.connection_id)) throw new LocalError('session_mismatch');
@@ -232,6 +245,24 @@ export class BrokerClient {
     this.inbox.setState('registration_pending', null);
     const refreshedMetadata = metadata ?? pending?.body.metadata ?? state.metadata ?? this.inbox.getState('metadata');
     return this.register(refreshedMetadata, { receiveEnabled: receiveEnabled ?? pending?.body.capabilities.receive_enabled ?? state.capabilities?.receive_enabled ?? false, signal });
+  }
+
+  /** Explicit replacement only; never edits or transfers the old journal. */
+  async createReplacementInbox({ directory, verifySession, signal } = {}) {
+    if(this.registrationVersion !== 2 || !this.expiredIdentityConfirmed || typeof verifySession !== 'function' || await verifySession(this.identity) !== true) throw new LocalError('session_mismatch');
+    try {
+      await this.request('GET', `/v1/sessions/${this.identity.client_id}`, { session:false, idempotent:true, signal });
+      throw new LocalError('session_mismatch');
+    } catch(error) {
+      if(!(error instanceof BrokerError && error.status === 404 && error.code === 'recipient_not_found')) throw error;
+    }
+    // Nonrecursive mkdir refuses every preexisting directory, including another
+    // journal. Parent safety/ownership is still checked by Inbox itself.
+    try { mkdirSync(directory, { mode:0o700 }); }
+    catch { throw new LocalError('invalid_configuration'); }
+    const inbox = new Inbox({directory,identity:newSessionIdentity(this.identity.client_type),now:this.now});
+    this.expiredIdentityConfirmed = false;
+    return inbox;
   }
 
   async heartbeat({ signal } = {}) {

@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+- Add opt-in disconnected-session retention with registration-v2 freshness, a
+  durable global fencing counter, and an explicit persistent v2 enforcement gate.
+- Preserve active-peer receipt/retry windows and outgoing delivery; remove expired
+  session incoming content without permanent identity tombstones.
+- Add reference SDK v2 registration and explicit fresh-journal recovery after
+  confirmed expiry. Native connector rollout and operator activation remain
+  separate prerequisites; cleanup defaults off. Database schema advances to 5.
+
 ## 0.5.1 (source candidate; publish separately)
 
 - Refine the administrator console into a compact, restrained interface with

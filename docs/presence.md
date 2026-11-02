@@ -96,3 +96,66 @@ lost-response recovery. A separate actual **reference adapter child process**
 proves graceful exit disconnects without closing its resumable identity. This is
 not evidence of Pi host lifecycle or model-visible notice integration; those
 remain explicit cross-connector acceptance checks. No VM or deployment needed.
+
+## Optional ephemeral-session retention (registration v2)
+
+Session cleanup is **disabled by default**. The operator may opt into
+`limits.session_retention_seconds: 172800` (48 hours), but only with explicit
+`require_registration_v2: true`. This persists a registration-version floor in the
+database: removing that setting or disabling cleanup later does **not** allow
+legacy registration again. Do not enable this until all four connectors support
+registration v2 and their native-session recovery has been tested. Deployment and
+activation are separate operator decisions; upgrading the package alone does not
+activate cleanup.
+
+Registration v2 uses the existing message protocol with two registration fields:
+`registration_version: 2` and immutable `requested_at` (UTC epoch milliseconds).
+The request must be younger than `registration_retry_seconds` and no more than
+five minutes ahead of the broker. Retrying uses the exact original request, not a
+new timestamp/key. Retention must exceed that retry window plus five minutes.
+The broker allocates monotonically increasing epochs from one persistent counter;
+clients accept an epoch greater than their previous one. Existing v1 clients keep
+the exact `previous_epoch + 1` behavior until enforcement; a v2 session cannot be
+downgraded. Legacy rows are never cleanup candidates until a verified v2 reconnect.
+
+The absence timer begins at explicit disconnect or lease expiry. Restart preserves
+an existing absence and starts absence for leases invalidated by restart. Migration
+gives preexisting offline rows a fresh grace period rather than purging them on
+upgrade. A successful reconnect resets the timer. Explicitly closed sessions keep
+their existing terminal semantics and are outside this disconnected-session policy.
+
+At expiry, the periodic sweep retires at most one eligible session per tick.
+Legacy request bodies are streamed rather than loaded together; new v2 sends keep
+only request digests for idempotency. SQLite work within that transaction remains
+proportional to the selected session’s retained rows, not a strict per-message
+budget. The default database budget is 1 GiB and is operator-configurable.
+A transaction removes the session from discovery/admin lists,
+registration records and incoming claims, without keeping a permanent identity
+hash. Incoming deliveries still pending become failed with `recipient_expired`;
+uncertainty about earlier transport is preserved. Incoming message bodies and
+stored send-request bodies are removed (only request digests remain for retries).
+Peer receipts and send-idempotency records remain for their existing finite
+retention periods. Accepted outgoing deliveries to surviving recipients are not
+cancelled merely because the sender expired: their payload and claim copies remain
+until the normal delivery/TTL and retention cleanup. Thus 48 hours is a **session
+absence policy**, not a promise to erase every shared receipt/copy at that instant.
+A UUID referenced by these bounded peer records cannot be registered again; the
+returning connector should choose a fresh random identity, never adopt a collision.
+
+### Rollout and recovery
+
+1. Install the broker with cleanup still disabled.
+2. Update the shared SDK and Pi, Claude, OpenCode and Antigravity connectors to use
+   v2, verify all four together, and ensure recovered native sessions use a new
+   identity/journal after confirmed expiry. Do not transfer/replay old pending work.
+3. Obtain operator confirmation before enabling the persistent v2 floor and cleanup.
+4. On rollback, disable cleanup if needed, but retain the new broker/SDK support for
+   the persisted protocol floor; do not downgrade the database format.
+
+The counter is durable across normal restart and initializes at least as high as
+all existing epochs. Restoring an **older backup** rolls back epochs, receipts and
+idempotency just as in the existing protocol. It is not safe transparent failover:
+restore offline with clients stopped, then establish fresh client identities and
+journals; never replay old pending operations. No credentials or enrollment grants
+are created or changed by this feature. Local connector journals and backups have
+their own retention; server cleanup does not erase them.
