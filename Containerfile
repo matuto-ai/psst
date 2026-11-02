@@ -14,7 +14,8 @@ WORKDIR /app
 COPY --from=base /app /app
 COPY test ./test
 COPY fixtures ./fixtures
-COPY openapi.json compose.yaml Containerfile ./
+COPY openapi.json compose.yaml Containerfile README.md CHANGELOG.md ./
+COPY docs/docker-release.md ./docs/docker-release.md
 RUN openssl version && npm run check && npm test
 
 FROM base AS runtime
