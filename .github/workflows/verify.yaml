@@ -1,4 +1,4 @@
-name: CI
+name: Verify
 on:
   push:
   pull_request:
@@ -9,7 +9,20 @@ concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name != 'release' }}
 jobs:
-  core:
+  verify:
+    needs: [local-tests, container, rootless-podman, cooperative-transport]
+    if: ${{ always() }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    steps:
+      - name: Require every verification job to pass
+        env:
+          LOCAL_RESULT: ${{ needs.local-tests.result }}
+          CONTAINER_RESULT: ${{ needs.container.result }}
+          PODMAN_RESULT: ${{ needs.rootless-podman.result }}
+          TRANSPORT_RESULT: ${{ needs.cooperative-transport.result }}
+        run: test "$LOCAL_RESULT" = success && test "$CONTAINER_RESULT" = success && test "$PODMAN_RESULT" = success && test "$TRANSPORT_RESULT" = success
+  local-tests:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
@@ -22,10 +35,12 @@ jobs:
           node-version: '24.19.0'
       - name: Verify pinned built-in SQLite runtime
         run: node --input-type=module -e "import {DatabaseSync} from 'node:sqlite'; const d=new DatabaseSync(':memory:'); if(d.prepare('SELECT sqlite_version() AS v').get().v!=='3.53.3')process.exit(1); d.close()"
-      - run: npm run check
+      - name: Check source syntax
+        run: npm run check
       - name: Check local-lab shell syntax
         run: bash -n scripts/start-local-claude-lab.sh scripts/copy-image-node.sh scripts/start-local-broker.sh scripts/start-lan-broker.sh scripts/docker-publish-smoke.sh
-      - run: npm test
+      - name: Run local tests
+        run: npm test
   container:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
@@ -154,3 +169,50 @@ jobs:
           path: ${{ runner.temp }}/approval-ui-podman/*.png
           if-no-files-found: warn
           retention-days: 7
+  cooperative-transport:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          repository: matuto-ai/pi-broker-connector
+          ref: f3d3bfc5cd17c10697d52e892f88c06a22ee2b16
+          path: .matrix/pi
+          persist-credentials: false
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          repository: matuto-ai/claude-code-broker-connector
+          ref: e04de626a0d01dc6345eb750364e719dd59cc319
+          path: .matrix/claude
+          persist-credentials: false
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          repository: matuto-ai/antigravity-broker-connector
+          ref: f3e0da54134bc03bd81f3c06c5ccc385d484b95e
+          path: .matrix/antigravity
+          persist-credentials: false
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          repository: matuto-ai/opencode-broker-connector
+          ref: 55b297525e6f931ab5c6ac377d1d8ccab8155bfb
+          path: .matrix/opencode
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24.19.0'
+      - name: Install immutable OpenCode host tool schema dependency
+        working-directory: .matrix/opencode
+        run: npm ci --ignore-scripts
+      - name: Verify matrix syntax
+        run: node --check integration/connector-driver.mjs && node --check integration/connector-matrix.test.mjs
+      - name: Pack all four connectors and test 16 routes twice with real TLS/admin approval
+        env:
+          PSST_MATRIX_SOURCES: '{"pi":".matrix/pi","claude-code":".matrix/claude","antigravity-cli":".matrix/antigravity","opencode":".matrix/opencode"}'
+        run: node --test integration/connector-matrix.test.mjs
+      # Synthetic host events + cooperative receive/ack are not authenticated model
+      # acceptance. Official host/Compose/Podman gates remain in each repository;
+      # OpenCode automatic admission and Antigravity sign-in remain separate gates.
