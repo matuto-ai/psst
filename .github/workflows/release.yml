@@ -12,7 +12,7 @@ concurrency:
   cancel-in-progress: false
 jobs:
   verify:
-    uses: ./.github/workflows/test.yml
+    uses: ./.github/workflows/verify.yaml
     permissions:
       contents: read
   publish:
