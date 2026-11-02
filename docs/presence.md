@@ -159,3 +159,14 @@ restore offline with clients stopped, then establish fresh client identities and
 journals; never replay old pending operations. No credentials or enrollment grants
 are created or changed by this feature. Local connector journals and backups have
 their own retention; server cleanup does not erase them.
+
+Production startup uses `await BrokerStore.open(...)`: it holds the existing
+single-writer owner lock and creates an integrity-checked, fsynced private snapshot
+**before** schema-5 migration or lease/claim rewriting. Schema 1–3 snapshots keep
+the existing `before-approval-*` location; schema 4 uses `before-retention-*`.
+A failed snapshot/finalization aborts startup without performing migration. The
+synchronous `new BrokerStore(...)` remains available for disposable tests/embedded
+callers but does not provide this automatic snapshot; such callers must arrange
+and verify their own backup before opening existing production storage. Preserve
+these snapshots under the operator's backup policy; server session cleanup does
+not delete them or make an old backup safe for transparent live restoration.

@@ -17,7 +17,7 @@ try{
   if(typeof config.database!=='string'||typeof config.credential_file!=='string')throw new Error('Database and credential_file are required.');
   const password=process.env.PSST_ADMIN_PASSWORD;
   if(password!==undefined&&password!==''&&(password.length<16||password.length>1024))throw new Error('Invalid administrator password configuration.');
-  store=new BrokerStore({path:config.database,limits:config.limits,requireRegistrationV2:config.require_registration_v2});
+  store=await BrokerStore.open({path:config.database,limits:config.limits,requireRegistrationV2:config.require_registration_v2});
   const enrollment=config.enrollment_policy_file===undefined?undefined:new EnrollmentService({store,policyFile:config.enrollment_policy_file});
   const approval=password?await ApprovalService.create({store}):undefined;
   const auth=new CredentialStore({path:config.credential_file,additionalCredentials:()=>[...(enrollment?.credentials()??[]),...(approval?.credentials()??[])],onRevoke:ids=>store.revoke(ids),onPolicyChange:entries=>store.applyAuthorizationPolicies(entries)});

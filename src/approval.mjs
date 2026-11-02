@@ -11,7 +11,7 @@ export class ApprovalService {
   static async create(options) {
     const {store}=options;
     const version=store.db.prepare('PRAGMA user_version').get().user_version;
-    if(version<4 || !store.db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='approval_requests'").get()){
+    if(!store.preApprovalBackup && (version<4 || !store.db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='approval_requests'").get())){
       const parent=dirname(store.path),dir=mkdtempSync(join(parent,'before-approval-'));
       chmodSync(dir,0o700);
       await backupDatabase(store.path,join(dir,'broker.sqlite'));

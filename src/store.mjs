@@ -1,10 +1,12 @@
 import { DatabaseSync, backup } from 'node:sqlite';
 import { PresenceService, presenceSnapshot } from './presence.mjs';
 import { randomUUID } from 'node:crypto';
-import { mkdirSync, chmodSync, statfsSync, statSync, realpathSync, lstatSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
+import { mkdirSync, mkdtempSync, writeFileSync, openSync, closeSync, fsyncSync, chmodSync, statfsSync, statSync, realpathSync, lstatSync } from 'node:fs';
+import { dirname, resolve, join } from 'node:path';
+import { backupDatabase } from '../scripts/backup.mjs';
 import { ApiError, DEFAULTS, canonical, digest, validateRegistration, validateMetadataPatch, validateSend, validateClaim, validateCompletion, validateRenew, validateIdempotencyKey, validateUuid, validateResend, validateOperationTime } from './protocol.mjs';
 
+const DEFER_MIGRATION = Symbol('defer-migration');
 const iso = n => new Date(n).toISOString();
 const parse = JSON.parse;
 const terminal = s => ['delivered', 'expired', 'failed', 'cancelled'].includes(s);
@@ -14,7 +16,28 @@ const intersects = (a, b) => a.some(x => b.includes(x));
 
 /** One synchronous writer. All state transitions run in BEGIN IMMEDIATE transactions. */
 export class BrokerStore {
-  constructor({ path, clock = Date.now, limits = {}, diskCheck, fault = () => {}, requireRegistrationV2 = false }) {
+  /** Production startup: snapshot the original schema while holding its owner
+   * lock, before any migration or startup lease/claim rewriting. */
+  static async open(options) {
+    const store = new BrokerStore({...options,[DEFER_MIGRATION]:true});
+    try {
+      const version = store.db.prepare('PRAGMA user_version').get().user_version;
+      if(version > 0 && version < 5) {
+        const parent=dirname(store.path), prefix=version<4 ? 'before-approval-' : 'before-retention-';
+        const directory=mkdtempSync(join(parent,prefix));
+        chmodSync(directory,0o700);
+        await backupDatabase(store.path,join(directory,'broker.sqlite'));
+        writeFileSync(join(directory,'manifest.json'),JSON.stringify({database:store.path,schema:version,created_at:iso(store.clock())})+'\n',{flag:'wx',mode:0o600});
+        for(const path of [join(directory,'broker.sqlite'),join(directory,'manifest.json'),directory,parent]) {
+          const fd=openSync(path,'r');try{fsyncSync(fd);}finally{closeSync(fd);}
+        }
+        store.preApprovalBackup = version < 4;
+      }
+      store.initialize();
+      return store;
+    } catch(error) { try{store.close();}catch{} throw error; }
+  }
+  constructor({ path, clock = Date.now, limits = {}, diskCheck, fault = () => {}, requireRegistrationV2 = false, [DEFER_MIGRATION]: deferMigration = false }) {
     if (typeof requireRegistrationV2 !== 'boolean') throw new Error('Invalid registration enforcement.');
     this.requireRegistrationV2 = requireRegistrationV2;
     this.clock = clock;
@@ -58,6 +81,15 @@ export class BrokerStore {
       this.db = new DatabaseSync(this.path);
       chmodSync(this.path, 0o600);
       this.db.exec('PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=1000; PRAGMA trusted_schema=OFF;');
+      if(deferMigration) { this.closed=false; return; }
+      this.initialize();
+    } catch (e) {
+      try { this.db?.close(); } catch {}
+      try { this.owner?.close(); } catch {}
+      throw e;
+    }
+  }
+  initialize() {
       this.migrate();
       this.presence = new PresenceService(this);
       this.tx(() => {
@@ -65,11 +97,6 @@ export class BrokerStore {
         this.db.exec("UPDATE messages SET state='queued', claim_id=NULL, claim_epoch=NULL, claim_until=NULL WHERE state='claimed';");
       });
       this.closed = false;
-    } catch (e) {
-      try { this.db?.close(); } catch {}
-      try { this.owner?.close(); } catch {}
-      throw e;
-    }
   }
   migrate() {
     const version = this.db.prepare('PRAGMA user_version').get().user_version;
