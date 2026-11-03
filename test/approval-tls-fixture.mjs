@@ -11,14 +11,14 @@ import { AdminUI } from '../src/admin.mjs';
 import { CredentialStore } from '../src/auth.mjs';
 import { createBrokerServer } from '../src/server.mjs';
 const execute=promisify(execFile);
-export async function approvalTlsFixture(t) {
+export async function approvalTlsFixture(t, { limits = {} } = {}) {
  const directory=mkdtempSync(join(tmpdir(),'psst-real-approval-tls-'));
  const certFile=join(directory,'ca.pem'),keyFile=join(directory,'key.pem'),credentialFile=join(directory,'credentials.json');
  let store,app;
  t.after(async()=>{try{await app?.close();}finally{try{store?.close();}finally{rmSync(directory,{recursive:true,force:true});}}});
  await execute('openssl',['req','-x509','-newkey','rsa:2048','-nodes','-keyout',keyFile,'-out',certFile,'-days','1','-subj','/CN=localhost','-addext','subjectAltName=DNS:localhost,IP:127.0.0.1'],{timeout:10000});
  writeFileSync(credentialFile,'{"credentials":[]}',{mode:0o600});
- store=new BrokerStore({path:join(directory,'broker.sqlite')});
+ store=new BrokerStore({path:join(directory,'broker.sqlite'),limits});
  const approval=await ApprovalService.create({store});
  const auth=new CredentialStore({path:credentialFile,additionalCredentials:()=>approval.credentials(),onRevoke:ids=>store.revoke(ids),onPolicyChange:e=>store.applyAuthorizationPolicies(e)});
  const password='synthetic-fixture-password-only';

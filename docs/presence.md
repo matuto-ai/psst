@@ -41,7 +41,9 @@ changed by this feature.
 The grace is measured from the **last confirmed heartbeat**, not another 600
 seconds after lease expiry. Both conditions must hold: the recipient's lease is
 no longer live, and that grace has elapsed. A longer configured lease remains
-valid even if it exceeds the notice grace.
+valid even if it exceeds the notice grace. The grace is an absolute duration in
+seconds, not a missed-heartbeat counter: non-default heartbeat intervals do not
+rescale it. Lease expiry and the configured duration must both be satisfied.
 
 The broker creates one durable `recipient_offline` event per affected sender,
 recipient and absence episode **only while queued/claimed delivery remains**.
@@ -82,20 +84,40 @@ notification guarantee. Existing broker disk/authorization limits still apply.
 
 The reference client/facade exposes `presenceEvents` / `broker_presence_events`
 and `acknowledgePresenceEvent` / `broker_acknowledge_presence_event`, including
-bounded MCP stdio tool definitions for cooperative polling and ACK. This PR does
-not silently enable native Pi model-input injection or guarantee automatic native
-notification presentation. Native consumers must integrate safe event-ID dedup,
-ACK and lifecycle behavior before claiming that acceptance criterion complete.
+bounded MCP stdio tool definitions for cooperative polling and ACK. Current
+connectors also consume this existing authenticated transport:
+
+- [Pi](https://github.com/matuto-ai/pi-psst-connector/blob/b87e29851a21be4342f8f4585fc16b1003f6c763/src/presence-notices.mjs)
+  persists event identity before a separate transport-notice entry, admits it only
+  at a safe idle boundary, reconciles exact durable native history, then ACKs.
+- [OpenCode](https://github.com/matuto-ai/opencode-psst-connector/blob/3eb99d967c34f94b4954bb5efe13f2a07e21986b/src/presence-notices.mjs)
+  uses its separate durable notice journal and native context-admission evidence.
+- [Claude](https://github.com/matuto-ai/claude-psst-connector/blob/c356ba09b8e11d516dbdf7a8e4f04ea6ed5841ae/src/presence-notices.mjs)
+  and [Antigravity](https://github.com/matuto-ai/antigravity-psst-connector/blob/9e6eb0315b28b27c73406fbbc1bfe5dac477fe9c/src/presence-notices.mjs)
+  retain notice metadata separately and require an explicit native read/ACK.
+  Their wakeup text is body-free and is not itself an ACK or a model response.
+
+Local notice persistence, native admission and event ACK remain distinct from
+message delivery, model reading, interpretation or reply. Uncertain native
+handoffs are reconciled, never blindly reinjected. None of these notice paths
+resends/cancels mail, closes sessions or changes credentials.
 
 ## Verification boundaries
 
-`test/presence.test.mjs` uses cheap fake-clock storage tests and actual HTTP for
-lease/grace thresholds, ownership/scopes, repeated polling/ACK, restart/reconnect,
-uncertain claims, terminal/expired mail, pagination/sample/capacity bounds and
-lost-response recovery. A separate actual **reference adapter child process**
-proves graceful exit disconnects without closing its resumable identity. This is
-not evidence of Pi host lifecycle or model-visible notice integration; those
-remain explicit cross-connector acceptance checks. No VM or deployment needed.
+`test/presence.test.mjs` and `test/presence-acceptance.test.mjs` use cheap fake-clock
+storage tests and actual HTTP for lease/grace thresholds, ownership/scopes,
+independent affected senders, repeated polling/ACK, restart/reconnect,
+uncertain claims, completion/cancellation/expiry, pagination/sample/byte/capacity
+bounds and lost-response recovery. See [the acceptance record](presence-acceptance.md)
+for the criterion-by-criterion mapping and exact evidence limits.
+
+The [actual Pi regression](native-pi-presence.md) runs official CLI processes in
+PTYs with a local provider, independently measures process death and lease
+freshness, and preserves inbox/queued mail through reload, exit, crash and exact
+native-session resume. The current packed four-connector matrix separately checks
+native-tool serialized discovery fields and prompt resumable shutdown using
+synthetic host boundaries. Neither evidence claims authenticated vendor-model
+behavior, a full four-host native compatibility matrix or a deployment.
 
 ## Optional ephemeral-session retention (registration v2)
 
