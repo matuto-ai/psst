@@ -78,7 +78,9 @@ All 12 cross-family and four distinct-session same-family routes assert exact
 sender, recipient, body and untrusted-agent provenance. Delivered items remain
 pending with no fabricated native receipt. The test removes/recreates recipients,
 queues four offline messages, kills/restarts the broker, verifies persistent
-identities/journals/dedupe, and runs three concurrent routes. Model metadata changes
+identities/journals/dedupe, and runs three concurrent routes. Broker container
+replacement retains its allocated private service IP; arbitrary dynamic service-IP
+churn and rootless DNS/route-cache behavior are not certified. Model metadata changes
 preserve identity; this is not an actual host model-switch proof. Containers are
 removed before their bind-mounted data is discarded.
 

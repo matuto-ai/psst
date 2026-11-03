@@ -23,9 +23,18 @@ const peers = types.flatMap(type => [0, 1].map(index => ({ type, index, name: `$
   data: join(directory, `${type}-${index}-data`), private: join(directory, `${type}-${index}-private`) })));
 const hardening = [...(engine === 'podman' ? ['--userns=keep-id'] : []), '--user', `${uid}:${gid}`,
   '--read-only', '--cap-drop=ALL', '--security-opt=no-new-privileges', '--network', network, '--pull=never'];
-const children = new Set(); let networkCreated = false;
-const startBroker = () => run(['run', '--detach', '--name', broker, '--network-alias', 'broker', ...hardening,
+const children = new Set(); let networkCreated = false, brokerAddress;
+async function startBroker() {
+  await run(['run', '--detach', '--name', broker, '--network-alias', 'broker', ...hardening,
+  ...(brokerAddress ? ['--ip', brokerAddress] : []),
   '--volume', `${brokerData}:/data:rw`, '--volume', `${brokerPrivate}:/run/broker:ro`, image]);
+  const state = JSON.parse(await run(['inspect', broker]))[0];
+  const address = state.NetworkSettings.Networks[network].IPAddress;
+  assert.ok(typeof address === 'string' && address.length > 0);
+  if (brokerAddress) assert.equal(address, brokerAddress, 'broker service endpoint survives container replacement');
+  brokerAddress = address;
+}
+
 async function startPeer(peer) {
   const child = spawn(engine, ['run', '--interactive', '--name', peer.name, ...hardening,
     '--volume', `${peer.data}:/data:rw`, '--volume', `${peer.private}:/run/client:ro`, image, 'node', 'scripts/topology-client.mjs'],
@@ -44,7 +53,7 @@ async function startPeer(peer) {
     if (response.ready) { resolveReady(response); return; }
     const request = pending.get(response.id); if (!request) return;
     clearTimeout(request.timer); pending.delete(response.id);
-    if (response.error) request.reject(Error(response.error)); else request.resolve(response.value);
+    if (response.error) request.reject(Error(`topology ${peer.type} ${request.command}: ${response.error}`)); else request.resolve(response.value);
   });
   const startup = setTimeout(() => fail(Error(`topology startup timeout: ${stderr}`)), 20000);
   let initial; try { initial = await ready; } finally { clearTimeout(startup); }
@@ -53,7 +62,7 @@ async function startPeer(peer) {
   peer.call = (command, args = {}) => new Promise((resolve, reject) => {
     const id = ++sequence;
     const timer = setTimeout(() => { pending.delete(id); reject(Error(`topology ${command} timed out`)); }, 15000);
-    pending.set(id, { resolve, reject, timer });
+    pending.set(id, { resolve, reject, timer, command });
     child.stdin.write(JSON.stringify({ id, command, args }) + '\n');
   });
   peer.stop = async () => {
@@ -123,7 +132,9 @@ try {
     const item = await send(sender, receiver, 'offline recipient'); offline.push(item);
     assert.equal(item.receipt.recipient_connected_at_acceptance, false);
   }
-  // No container shares process or journal state. Recreate exact local storage only.
+  // No container shares process or journal state. Preserve the private broker
+  // service IP across replacement, as a stable LAN service endpoint would.
+  // Rootless DNS/route caches for arbitrary service-IP churn are not this test.
   await run(['kill', '--signal', 'KILL', broker]); await run(['wait', broker]); await run(['rm', broker]);
   await startBroker(); await Promise.all(receivers.map(startPeer));
   assert.deepEqual(receivers.map(peer => peer.identity.client_id), originalIds);
@@ -147,7 +158,7 @@ try {
   assert.equal(await run(['inspect', '--format', '{{.State.ExitCode}}', broker]), '0');
   console.log(JSON.stringify({ result: 'passed', engine, topology: 'eight separate reference adapter containers and one TLS broker',
     directedRoutes: 16, offlineRoutes: 4, concurrentRoutes: 3, brokerCrashRecovery: true, inboxRecreation: true,
-    modelMetadataSwitch: true, publishedPorts: 0, nativeHostCertification: false, twoPhysicalHosts: false }));
+    modelMetadataSwitch: true, publishedPorts: 0, stablePrivateBrokerAddress: true, nativeHostCertification: false, twoPhysicalHosts: false }));
 } finally {
   const removed = await Promise.allSettled([broker, ...peers.map(peer => peer.name)].map(name => run(['rm', '--force', name])));
   for (const child of children) { if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL'); }
