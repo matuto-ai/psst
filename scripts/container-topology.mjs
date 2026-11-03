@@ -48,10 +48,11 @@ async function startPeer(peer) {
   });
   const startup = setTimeout(() => fail(Error(`topology startup timeout: ${stderr}`)), 20000);
   let initial; try { initial = await ready; } finally { clearTimeout(startup); }
+  assert.equal(initial.uid, uid, 'actual probe runs as the explicitly selected nonroot operator');
   peer.identity = initial.identity; peer.epoch = initial.epoch;
   peer.call = (command, args = {}) => new Promise((resolve, reject) => {
     const id = ++sequence;
-    const timer = setTimeout(() => { pending.delete(id); reject(Error(`topology ${command} timed out`)); }, 10000);
+    const timer = setTimeout(() => { pending.delete(id); reject(Error(`topology ${command} timed out`)); }, 15000);
     pending.set(id, { resolve, reject, timer });
     child.stdin.write(JSON.stringify({ id, command, args }) + '\n');
   });

@@ -34,7 +34,7 @@ test('topology probe uses real verified TLS and retains local mail on subprocess
       const item = pending.get(frame.id); if (!item) return; pending.delete(frame.id);
       if (frame.error) item.reject(Error(frame.error)); else item.resolve(frame.value);
     });
-    const initial = await ready;
+    const initial = await ready; assert.equal(initial.uid, process.getuid());
     const call = (command, args = {}) => new Promise((resolve, reject) => {
       const id = ++sequence; pending.set(id, { resolve, reject }); child.stdin.write(JSON.stringify({ id, command, args }) + '\n');
     });

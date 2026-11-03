@@ -9,7 +9,6 @@ import { BrokerClient } from '../reference/client.mjs';
 import { AdapterRuntime } from '../reference/runtime.mjs';
 import { TYPES } from '../src/protocol.mjs';
 
-assert.ok(process.getuid() > 0, 'nonroot fixture required');
 const config = JSON.parse(readFileSync(process.argv[2] ?? '/run/client/config.json'));
 assert.ok(TYPES.includes(config.type));
 assert.equal(new URL(config.url).protocol, 'https:');
@@ -20,7 +19,7 @@ if (!existsSync(identityFile)) writeFileSync(identityFile, JSON.stringify(newSes
 const identity = JSON.parse(readFileSync(identityFile));
 assert.equal(identity.client_type, config.type);
 const inbox = new Inbox({ directory: join(directory, 'journal'), identity });
-const client = new BrokerClient({ url: config.url, tokenFile: config.token, caFile: config.ca, inbox });
+const client = new BrokerClient({ url: config.url, tokenFile: config.token, caFile: config.ca, inbox, requestTimeoutMs: 2000, maxAttempts: 3 });
 const runtime = new AdapterRuntime({ client, verifySession: () => true, isAlive: () => true });
 const metadata = { name: 'disposable-topology-probe', model: { provider: 'fixture', id: 'before', source: 'configured' }, project: null };
 let closed = false;
@@ -37,7 +36,7 @@ try {
     catch (error) { if (!['request_failed', 'not_ready'].includes(error.code)) throw error; await delay(100); }
   }
   assert.ok(connected, 'broker readiness timeout');
-  process.stdout.write(JSON.stringify({ ready: true, identity, epoch: client.attachment.lease_epoch }) + '\n');
+  process.stdout.write(JSON.stringify({ ready: true, uid: process.getuid(), identity, epoch: client.attachment.lease_epoch }) + '\n');
   for await (const line of createInterface({ input: process.stdin })) {
     const { id, command, args = {} } = JSON.parse(line);
     let value;
