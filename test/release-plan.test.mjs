@@ -23,3 +23,19 @@ test('current release metadata uses the current repository and matching Compose 
  assert.ok(readFileSync(new URL('../compose.yaml',import.meta.url),'utf8').includes(`${plan.image}:${pkg.version}`));
  assert.ok(readFileSync(new URL('../Containerfile',import.meta.url),'utf8').includes('https://github.com/matuto-ai/psst'));
 });
+
+test('source candidate documentation stays aligned without claiming publication or activation',async()=>{
+ const {readFileSync}=await import('node:fs');
+ const read=path=>readFileSync(new URL(`../${path}`,import.meta.url),'utf8');
+ const pkg=JSON.parse(read('package.json'));
+ assert.equal(pkg.name,'ai-agent-msg-broker');assert.equal(pkg.private,true);
+ const guide=read('docs/docker-release.md'),changelog=read('CHANGELOG.md'),readme=read('README.md');
+ assert.ok(guide.includes(`## ${pkg.version} source candidate`));
+ assert.ok(guide.includes(`GitHub Release \`v${pkg.version}\``));
+ assert.ok(guide.includes(`ghcr.io/matuto-ai/psst:${pkg.version}`));
+ assert.ok(changelog.startsWith(`# Changelog\n\n## ${pkg.version} (source candidate; publish separately)`));
+ assert.match(guide,/disabled by default/);assert.match(guide,/schema advances to \*\*5\*\*/);
+ assert.match(guide,/separate operator decision/);assert.match(guide,/Do not open the upgraded database with an older binary/);
+ assert.match(readme,/git clone https:\/\/github.com\/matuto-ai\/psst\.git/);
+ assert.doesNotMatch(readme,/feat\/durable-broker-v1|main` still holds the specification|brunoorsolon\/ai-agent-msg-broker/);
+});
