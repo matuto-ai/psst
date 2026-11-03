@@ -101,7 +101,8 @@ test('actual Pi lifecycle preserves resumable mail and truthful real-time presen
   let peerRuntime, peerInbox;
   const report = { official_host: 'Pi 1.4.0', authenticated_model: false, provider: 'local faux',
     clock: 'real wall clock', negotiated_heartbeat_seconds: 2, negotiated_lease_seconds: 6,
-    production_defaults_changed: false, completed: false, observations: [], sends: [] };
+    production_defaults_changed: false, completed: false, observations: [], sends: [],
+    active_discovery_filter: { connected: true, limit: 1 } };
   const retain = () => {
     if (process.env.PSST_NATIVE_PRESENCE_EVIDENCE) writeFileSync(resolve(process.env.PSST_NATIVE_PRESENCE_EVIDENCE), JSON.stringify(report, null, 2) + '\n');
   };
@@ -175,6 +176,7 @@ test('actual Pi lifecycle preserves resumable mail and truthful real-time presen
     for (const field of ['last_heartbeat_at', 'lease_expires_at', 'observed_at']) assert.ok(Number.isFinite(Date.parse(snapshot[field])));
     const live = (await child.call('status')).live;
     const observation = { phase, native_label: child.label, process_live: live,
+      discovery_filter: { connected: false },
       presence_state: snapshot.presence_state, connected: snapshot.connected,
       last_heartbeat_at: snapshot.last_heartbeat_at, lease_expires_at: snapshot.lease_expires_at,
       observed_at: snapshot.observed_at, server_time: listed.server_time };
@@ -277,6 +279,11 @@ test('actual Pi lifecycle preserves resumable mail and truthful real-time presen
   assert.ok(Date.parse(expired.observed_at) >= Date.parse(expired.lease_expires_at));
   assert.ok(Date.parse(expired.observed_at) - Date.parse(expired.lease_expires_at) < 1000);
   assert.equal((await pagedActive()).some(row => row.client_id === c.clientId), false);
+  const stillExited = await observe('original-exited-owner-after-negotiated-interval', b);
+  assert.equal(stillExited.connected, false);
+  assert.equal(stillExited.last_heartbeat_at, stoppedHeartbeats[1]);
+  assert.ok(Date.parse(stillExited.observed_at) - Date.parse(stillExited.last_heartbeat_at) >= limits.lease_seconds * 1000,
+    'original exited owner remains offline after its full negotiated lease interval');
   const afterCrash = await send(c, 'queued after abrupt native exit');
   assert.equal(afterCrash.recipient_connected_at_acceptance, false);
   assert.equal((await tools.broker_message_status({ message_id: afterCrash.message_id })).delivery_state, 'queued');

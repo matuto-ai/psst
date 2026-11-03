@@ -90,9 +90,11 @@ not establish authenticated vendor-model behavior, the owner's launcher or
 historical package-upgrade behavior, interactive `/resume` picker UX, all native
 human-permission cases, or other hosts' lifecycle behavior.
 
-It does not replace the separate prolonged-offline-event consumer tests or prove
-their entire cross-host notification matrix. No model response is needed to infer
-transport presence. Issue #29 remains open until its remaining original lifecycle,
-discovery/admin/native-output and transport-notice criteria are reconciled against
-their own evidence. This test does not fill the complete native compatibility
-matrix or the deployment gates in [issue #11](https://github.com/matuto-ai/psst/issues/11).
+Prolonged-offline notices have separate cheap broker/consumer tests; this lifecycle
+regression is not a native end-to-end notice test. No model response is needed to
+infer transport presence. The [issue #29 acceptance record](presence-acceptance.md)
+reconciles lifecycle, discovery/admin/native output and notice criteria against
+their appropriate evidence. Authenticated vendor models, a default 180-second
+wall-clock wait and the complete four-host matrix are not added requirements for
+this reported-flow regression. The broader native compatibility and deployment
+gates remain in [issue #11](https://github.com/matuto-ai/psst/issues/11).

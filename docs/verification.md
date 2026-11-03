@@ -31,11 +31,11 @@ mode, the user's network or a two-host LAN.
 
 Presence/resumable-disconnect and pending-delivery event support was merged in
 [PR #33](https://github.com/matuto-ai/psst/pull/33). Fake-clock, authenticated HTTP
-and reference-child-process tests support that backend result. Native event
-consumption and complete host lifecycle acceptance remain separate under
-[#29](https://github.com/matuto-ai/psst/issues/29); see [presence.md](presence.md)
-for the current contract. Resumable disconnect preserves identity/mail while
-terminal close remains a different operation.
+and reference-child-process tests support that backend result. The later
+[issue #29 acceptance record](presence-acceptance.md) adds actual Pi lifecycle,
+current native-tool output and complete cheap notice coverage; see
+[presence.md](presence.md) for the current contract. Resumable disconnect preserves
+identity/mail while terminal close remains a different operation.
 
 The required `native-presence` lane adds an [actual Pi process lifecycle
 regression](native-pi-presence.md): two official CLI owners in PTYs, native
@@ -85,10 +85,10 @@ retained unchanged as a backwards-compatibility check. This newer job pins:
 
 | Connector | Current-cohort revision |
 | --- | --- |
-| Pi | `9dd2f549da4a3eec43c1c2288a952ce1378458c8` |
-| Claude | `a392f8823f76385c717662fdd2eeea7cc556d126` |
-| Antigravity | `2a14f88058c2077a4a315ed9c22098adbea5e82c` |
-| OpenCode | `36110bdeb15ca15e52106d6d0af9fc71beee3ab6` |
+| Pi | `b87e29851a21be4342f8f4585fc16b1003f6c763` |
+| Claude | `c356ba09b8e11d516dbdf7a8e4f04ea6ed5841ae` |
+| Antigravity | `9e6eb0315b28b27c73406fbbc1bfe5dac477fe9c` |
+| OpenCode | `3eb99d967c34f94b4954bb5efe13f2a07e21986b` |
 
 The test packs each checkout under its current npm name, uses its real approval
 helper against the real TLS/admin service, and starts two isolated modeled native
@@ -114,8 +114,11 @@ cycle. They check exact message/sender/recipient/provenance/content, absence fro
 every unrelated inbox, one automatic Pi/OpenCode native capture per message,
 consumed local state, family-specific native-receipt versus explicit-read
 semantics, original installation credential
-reuse and no repeated enrollment. During pending-restart checks, broker delivery
-completes while the modeled native boundary is held; restart preserves the exact
+reuse and no repeated enrollment. Every family's production native-tool result
+retains explicit presence and heartbeat/lease/observation timestamps; the next
+round's active result excludes the prior disconnected lifetimes. Modeled native
+shutdown promptly ends presence without closing identities. During pending-restart
+checks, broker delivery completes while the modeled native boundary is held; restart preserves the exact
 inbox identity/envelope and does not release that boundary. Claude restarts only
 its MCP/monitor children so no owner PID or lifetime is forged. The second route
 round intentionally uses fresh native lifetimes, not a claimed native resume.
@@ -172,8 +175,10 @@ complete directed native routes and safety/recovery evidence, concurrent
 three-party exchange, offline/model-switch/restart flows, Fedora
 SELinux/Quadlet/autostart and two-host LAN. See
 [the unchanged uncertified native matrix](feasibility.md#directed-real-harness-matrix).
-[Issue #29](https://github.com/matuto-ai/psst/issues/29) retains remaining native
-lifecycle and offline-notice acceptance. No release, deployment, real credential
+The bounded lifecycle/discovery/offline-notice criteria in
+[issue #29](https://github.com/matuto-ai/psst/issues/29) are mapped separately in
+[its acceptance record](presence-acceptance.md); do not confuse them with the
+broader #11 gates. No release, deployment, real credential
 or host-configuration change is implied by this evidence record.
 
 The sections below retain the original October checkpoint and its immutable

@@ -121,6 +121,7 @@ test('current four packages: directed transport, synthetic native boundaries, pe
     const text = `current matrix ${label}: ${randomUUID()}`;
     const sent = await sender.call('broker_send', { recipient_id: recipient.id, text }, randomUUID());
     assert.ok(sent.message_id, JSON.stringify(sent));
+    assert.equal(sent.recipient_connected_at_acceptance, true, 'native tool ACK describes current transport presence, not completion');
     assert.equal(Object.hasOwn(sent, 'send_key'), false, 'retry keys stay inside the native connector');
     return { sender, recipient, text, messageId: sent.message_id };
   }
@@ -169,6 +170,20 @@ test('current four packages: directed transport, synthetic native boundaries, pe
     }
     const all = Object.values(sessions).flat();
     assert.equal(new Set(all.map(session => session.id)).size, 8);
+    // Exercise each production native tool's serialized result. The host
+    // contexts remain synthetic; no broker-only shortcut can hide field loss.
+    for (const type of types) {
+      const listing = await sessions[type][0].call('broker_list_clients');
+      assert.deepEqual(listing.clients.map(row => row.client_id).sort(), all.map(session => session.id).sort(),
+        `${type} active native output excludes all prior disconnected lifetimes`);
+      for (const row of listing.clients) {
+        assert.equal(row.connected, true);
+        assert.equal(row.presence_state, 'connected');
+        assert.equal(row.observed_at, listing.server_time);
+        assert.ok(Date.parse(row.last_heartbeat_at) <= Date.parse(row.observed_at));
+        assert.ok(Date.parse(row.lease_expires_at) > Date.parse(row.observed_at));
+      }
+    }
     for (const from of types) for (const to of types) {
       const recipient = sessions[to][from === to ? 1 : 0];
       const item = await send(sessions[from][0], recipient, `${generation}: ${from} -> ${to}`);
@@ -201,6 +216,11 @@ test('current four packages: directed transport, synthetic native boundaries, pe
       await Promise.all(concurrent.map(finish));
     }
     for (const driver of all) await driver.close();
+    for (const session of all) {
+      const row = f.store.db.prepare('SELECT closed,lease_until FROM sessions WHERE id=?').get(session.id);
+      assert.equal(row.closed, 0, `${session.type} modeled native shutdown preserves resumability`);
+      assert.ok(row.lease_until <= Date.now(), `${session.type} modeled native shutdown ends transport presence promptly`);
+    }
     assert.equal(enrollmentPosts, 4, 'connector restart and fresh native lifetimes never reenroll');
     for (const type of types) assert.equal(createHash('sha256').update(readFileSync(join(approved[type].connectionFile, '..', 'token'))).digest('hex'), hashes[type]);
   }

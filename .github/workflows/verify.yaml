@@ -301,25 +301,25 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           repository: matuto-ai/pi-psst-connector
-          ref: 9dd2f549da4a3eec43c1c2288a952ce1378458c8
+          ref: b87e29851a21be4342f8f4585fc16b1003f6c763
           path: .current-matrix/pi
           persist-credentials: false
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           repository: matuto-ai/claude-psst-connector
-          ref: a392f8823f76385c717662fdd2eeea7cc556d126
+          ref: c356ba09b8e11d516dbdf7a8e4f04ea6ed5841ae
           path: .current-matrix/claude
           persist-credentials: false
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           repository: matuto-ai/antigravity-psst-connector
-          ref: 2a14f88058c2077a4a315ed9c22098adbea5e82c
+          ref: 9e6eb0315b28b27c73406fbbc1bfe5dac477fe9c
           path: .current-matrix/antigravity
           persist-credentials: false
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           repository: matuto-ai/opencode-psst-connector
-          ref: 36110bdeb15ca15e52106d6d0af9fc71beee3ab6
+          ref: 3eb99d967c34f94b4954bb5efe13f2a07e21986b
           path: .current-matrix/opencode
           persist-credentials: false
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
