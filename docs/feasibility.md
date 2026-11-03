@@ -59,15 +59,26 @@ fresh native lifetimes.
 
 Host events/contexts are synthetic and the test invokes cooperative ACKs. This
 does not prove same-native-session pending-inbox recovery or automatic native
-input. The current broker CI still pins that older connector cohort; its pass
-does not establish compatibility of all newer connector heads together. See the
+input. That independent compatibility lane keeps the older connector cohort; its
+pass does not establish compatibility of newer connector heads together. See the
 [exact matrix pins](verification.md#packaged-connector-matrix).
+
+The new `current-transport` lane composes four newer immutable package revisions
+through their production native connector boundaries. It covers 32 directed
+routes, four same-modeled-owner pending-inbox restarts and a concurrent three-party
+cycle, retaining four original installation approvals. Pi/OpenCode automatic
+delivery is exercised against synthetic host APIs/history. Claude/Antigravity
+actual monitor/waiter notices lead to explicitly simulated model read/ACK actions.
+Broker/TLS/inboxes are real; native host inputs/receipts and model actions are
+synthetic. The [current-cohort record](verification.md#current-packaged-cohort-with-synthetic-native-boundaries)
+specifies pins, assertions and reproducible commands. This does not certify an
+official CLI, authenticated model, native package-manager install or any cell below.
 
 ## Directed real-harness matrix
 
 All entries remain **not certified** for the complete issue #11 acceptance set.
 Diagonal cells require distinct same-family sessions. Neither reference routes,
-packaged cooperative routes nor isolated one-host probes fill these cells.
+packaged cooperative/synthetic-native routes nor isolated one-host probes fill these cells.
 
 | Sender → receiver | Pi | Antigravity CLI | Claude Code | OpenCode |
 | --- | --- | --- | --- | --- |
