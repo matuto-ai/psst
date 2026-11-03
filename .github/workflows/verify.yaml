@@ -10,7 +10,7 @@ concurrency:
   cancel-in-progress: ${{ github.event_name != 'release' }}
 jobs:
   verify:
-    needs: [local-tests, container, rootless-podman, cooperative-transport, current-transport, native-presence]
+    needs: [local-tests, container, rootless-podman, browser-compose, browser-podman, cooperative-transport, current-transport, native-presence]
     if: ${{ always() }}
     runs-on: ubuntu-24.04
     timeout-minutes: 2
@@ -20,10 +20,12 @@ jobs:
           LOCAL_RESULT: ${{ needs.local-tests.result }}
           CONTAINER_RESULT: ${{ needs.container.result }}
           PODMAN_RESULT: ${{ needs.rootless-podman.result }}
+          BROWSER_COMPOSE_RESULT: ${{ needs.browser-compose.result }}
+          BROWSER_PODMAN_RESULT: ${{ needs.browser-podman.result }}
           TRANSPORT_RESULT: ${{ needs.cooperative-transport.result }}
           CURRENT_RESULT: ${{ needs.current-transport.result }}
           NATIVE_PRESENCE_RESULT: ${{ needs.native-presence.result }}
-        run: test "$LOCAL_RESULT" = success && test "$CONTAINER_RESULT" = success && test "$PODMAN_RESULT" = success && test "$TRANSPORT_RESULT" = success && test "$CURRENT_RESULT" = success && test "$NATIVE_PRESENCE_RESULT" = success
+        run: test "$LOCAL_RESULT" = success && test "$CONTAINER_RESULT" = success && test "$PODMAN_RESULT" = success && test "$BROWSER_COMPOSE_RESULT" = success && test "$BROWSER_PODMAN_RESULT" = success && test "$TRANSPORT_RESULT" = success && test "$CURRENT_RESULT" = success && test "$NATIVE_PRESENCE_RESULT" = success
   native-presence:
     runs-on: ubuntu-24.04
     timeout-minutes: 3
@@ -108,51 +110,6 @@ jobs:
         run: bash scripts/docker-publish-smoke.sh broker-runtime:ci
       - name: Validate Compose packaging without starting another service
         run: docker compose -f compose.yaml config --quiet
-      - name: Install pinned browser QA tools in an isolated CI virtualenv
-        run: |
-          python3 -m venv "$RUNNER_TEMP/approval-browser"
-          "$RUNNER_TEMP/approval-browser/bin/pip" install playwright==1.62.0
-          "$RUNNER_TEMP/approval-browser/bin/playwright" install --with-deps chromium
-          sudo apt-get update
-          sudo apt-get install --no-install-recommends -y libnss3-tools
-          echo "$RUNNER_TEMP/approval-browser/bin" >> "$GITHUB_PATH"
-          "$RUNNER_TEMP/approval-browser/bin/python" scripts/approval-browser-retry-test.py
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
-        with:
-          node-version: '24.19.0'
-      - name: Verify dynamic admin filters and themes in actual Chromium
-        run: python scripts/admin-browser-smoke.py
-        env:
-          ADMIN_TEST_ARTIFACTS: ${{ runner.temp }}/admin-browser
-      - name: Keep synthetic admin browser evidence
-        if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        with:
-          name: admin-browser
-          path: ${{ runner.temp }}/admin-browser/*.png
-          if-no-files-found: warn
-          retention-days: 7
-      - name: Check out immutable pre-approval broker for real schema3 migration
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-        with:
-          ref: bd2dd445de4bf3105f20caafb471f280bf981b63
-          path: .legacy-broker-source
-          persist-credentials: false
-      - name: Build prior runtime locally without registry publication
-        run: docker build --target runtime -f .legacy-broker-source/Containerfile -t broker-legacy:ci .legacy-broker-source
-      - name: Test ordinary Compose admin UI and persistent approval bootstrap
-        run: bash scripts/approval-compose-smoke.sh broker-runtime:ci
-        env:
-          APPROVAL_TEST_LEGACY_IMAGE: broker-legacy:ci
-          APPROVAL_TEST_ARTIFACTS: ${{ runner.temp }}/approval-ui-compose
-      - name: Keep sanitized actual-browser UI evidence
-        if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        with:
-          name: approval-ui-compose
-          path: ${{ runner.temp }}/approval-ui-compose/*.png
-          if-no-files-found: warn
-          retention-days: 7
   rootless-podman:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
@@ -182,6 +139,17 @@ jobs:
         run: node scripts/local-broker-bootstrap-smoke.mjs localhost/broker-podman:ci
       - name: Verify host HTTPS from a separate rootless container without host-loopback exception
         run: node scripts/lan-broker-bootstrap-smoke.mjs localhost/broker-podman:ci
+  # Browser dependencies are independent of the container runtime checks.
+  # Keep the complete cold install, but do not serialize its network downloads
+  # after the unrelated Docker/Podman suites on the workflow critical path.
+  browser-compose:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
       - name: Install pinned browser QA tools in an isolated CI virtualenv
         run: |
           python3 -m venv "$RUNNER_TEMP/approval-browser"
@@ -191,6 +159,69 @@ jobs:
           sudo apt-get install --no-install-recommends -y libnss3-tools
           echo "$RUNNER_TEMP/approval-browser/bin" >> "$GITHUB_PATH"
           "$RUNNER_TEMP/approval-browser/bin/python" scripts/approval-browser-retry-test.py
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '24.19.0'
+      - name: Verify dynamic admin filters and themes in actual Chromium
+        run: python scripts/admin-browser-smoke.py
+        env:
+          ADMIN_TEST_ARTIFACTS: ${{ runner.temp }}/admin-browser
+      - name: Keep synthetic admin browser evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: admin-browser
+          path: ${{ runner.temp }}/admin-browser/*.png
+          if-no-files-found: warn
+          retention-days: 7
+      - name: Build nonroot runtime image for the independent browser job
+        run: docker build --target runtime -f Containerfile -t broker-runtime:ci .
+      - name: Check out immutable pre-approval broker for real schema3 migration
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: bd2dd445de4bf3105f20caafb471f280bf981b63
+          path: .legacy-broker-source
+          persist-credentials: false
+      - name: Build prior runtime locally without registry publication
+        run: docker build --target runtime -f .legacy-broker-source/Containerfile -t broker-legacy:ci .legacy-broker-source
+      - name: Test ordinary Compose admin UI and persistent approval bootstrap
+        run: bash scripts/approval-compose-smoke.sh broker-runtime:ci
+        env:
+          APPROVAL_TEST_LEGACY_IMAGE: broker-legacy:ci
+          APPROVAL_TEST_ARTIFACTS: ${{ runner.temp }}/approval-ui-compose
+      - name: Keep sanitized actual-browser UI evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: approval-ui-compose
+          path: ${{ runner.temp }}/approval-ui-compose/*.png
+          if-no-files-found: warn
+          retention-days: 7
+  browser-podman:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Install pinned browser QA tools in an isolated CI virtualenv
+        run: |
+          python3 -m venv "$RUNNER_TEMP/approval-browser"
+          "$RUNNER_TEMP/approval-browser/bin/pip" install playwright==1.62.0
+          "$RUNNER_TEMP/approval-browser/bin/playwright" install --with-deps chromium
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y libnss3-tools
+          echo "$RUNNER_TEMP/approval-browser/bin" >> "$GITHUB_PATH"
+          "$RUNNER_TEMP/approval-browser/bin/python" scripts/approval-browser-retry-test.py
+      - name: Verify preinstalled unprivileged rootless Podman
+        run: |
+          test "$(id -u)" -ne 0
+          command -v podman
+          podman --version
+          test "$(podman info --format '{{.Host.Security.Rootless}}')" = true
+      - name: Build digest-pinned runtime with rootless Podman
+        run: podman build --target runtime -f Containerfile -t localhost/broker-podman:ci .
       - name: Check out immutable pre-approval broker for real schema3 migration
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:

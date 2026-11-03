@@ -45,6 +45,17 @@ provider is controlled; the recorded native process evidence is separate from
 authenticated vendor-model or cross-host acceptance. Each candidate requires its
 own CI result; earlier runs above did not execute this new lane.
 
+The current workflow runs the existing Compose/Chromium and rootless-Podman
+approval/migration checks in independent required `browser-compose` and
+`browser-podman` jobs. Each performs the same complete pinned Playwright install,
+including its system/font dependencies, builds the same current and immutable
+legacy runtime images locally, and retains its browser evidence. This overlaps
+cold browser setup with the unchanged container/runtime suites instead of putting
+both on one critical path. No test or dependency is omitted, and the aggregate
+`verify` requires both new jobs as well as every existing suite. Measure the full
+workflow from creation to completion against the 150-second target and 165-second
+ceiling; a fast individual test does not establish that budget.
+
 ### Packaged connector matrix
 
 [PR #24](https://github.com/matuto-ai/psst/pull/24) introduced
