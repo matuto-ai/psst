@@ -1,31 +1,73 @@
 # Compatibility evidence and release gates
 
-## What this repository can establish
+## What this record establishes
 
-The shared `/v1` contract, broker persistence/HTTP tests, reference durable inbox, and fake-harness conformance can establish generic authenticated transport behavior. They **cannot certify a real CLI's native input boundary**. Broker `delivered` always stops at the exact recipient's durable adapter inbox.
+The broker owns authenticated transport, registry state and durable message delivery.
+Broker `delivered` stops at the exact recipient's durable adapter inbox. Native
+history persistence, model-visible input, an explicit read ACK and successful work
+are separate observations.
 
-The executable contract fixtures and pinned research links are documented in [contract.md](contract.md#real-harness-release-gates). The detailed safety requirements are in [spec-v1.md](spec-v1.md#9-adapter-contract-safe-conversational-delivery). Runtime/container verification limits are in [operations.md](operations.md).
+This record reconciles evidence available on **2026-11-03** for
+[issue #11](https://github.com/matuto-ai/psst/issues/11). It includes newer connector
+qualification without treating isolated fixtures as the complete native matrix.
+Exact revisions, CI runs and limits are in the
+[verification snapshot](verification.md#evidence-snapshot-2026-11-03).
 
-## Real CLI status
+The executable contract is documented in [contract.md](contract.md#real-harness-release-gates).
+The safety requirements remain in [spec-v1.md](spec-v1.md#9-adapter-contract-safe-conversational-delivery).
+Deployment boundaries are in [operations.md](operations.md).
 
-| CLI | Installed/tested native CLI version in this repository | Automatic final-hop certification | Required evidence before claiming support |
-| --- | --- | --- | --- |
-| Pi | Official **1.4.0** exercised in an [isolated pinned probe](probes/pi-1.4/README.md): actual session/provider/extension and InteractiveMode Enter paths; injected terminal and deterministic provider. | **Not certified**; `sendMessage` returns void and the inbox item stays pending. | Production exact-session adapter ownership, native acceptance/ambiguity recovery and complete approval/draft/abort arbitration; physical PTY and real-model behavior remain outside the probe. |
-| Antigravity CLI | No tested CLI version. | Unverified | Distinguish exclusive managed stream-JSON from pre-existing interactive CLI. Prove safe result boundaries and prompt/permission behavior; otherwise cooperative-only or unsupported. |
-| Claude Code | No tested CLI version. | Unverified | Explicit compatible Channel/managed/cooperative opt-in; notification receipt is not native acceptance; no permission relay; prompt/abort race and provenance tests. |
-| OpenCode | No tested CLI version. | Unverified | Connect to the exact intended server/session; prove exclusive input arbitration or native queue; approval/draft races; native receipt/idempotency reconciliation. |
+## Native host evidence
 
-The [Pi probe archive](probes/pi-1.4/README.md) includes reproducible source, sanitized output and exact source hashes. It establishes observed Pi native follow-up ordering/provenance and lifetime behavior at its historical code pin, not a production Pi adapter or Antigravity compatibility: its managed Antigravity child is synthetic. All directed real-harness cells below remain uncertified.
+These are separate connector runs, not a single test of all current connectors
+together. A successful official CLI fixture establishes only the exercised path,
+version and local provider conditions.
 
-A separate adapter implementation, documentation probe, or unit-test fake does not change these cells until its real pinned-CLI evidence is linked. A locally unsupported/cooperative-only adapter may still durably receive/ACK and retain messages without touching a TUI. Do not downgrade by terminal typing or silently infer transport from model names.
+| Host | Retained evidence | Remaining acceptance |
+| --- | --- | --- |
+| Pi **1.4.0** | Official loader and tool-call probes; resumed-history rendering/persistence and model-context conversion; URL-only PTY setup with real TLS/admin approval; container recreation and isolated SDK sessions. Using a fixture event/client and append-backed send stand-in, the current host-card probe persists a distinct offline notice, observes it in converted model context and ACKs its exact event once. | Complete idle/busy/draft/permission/abort/crash-window behavior and authenticated-model acceptance across the directed matrix. A persisted custom entry is not evidence that a model read or acted on it. |
+| Antigravity CLI **1.4.7**, build **5900205422411776** | Pinned official validator/install/list; actual production plugin with root, compact and new-conversation checks in network-isolated containers. A loopback fake provider observes readable offline-event tool output and an explicit event ACK while queued mail remains unchanged. | Unattended native waiter wakeup and authenticated-model/user-launcher acceptance, including the complete human-input and failure matrix. The controlled provider sequence does not prove unsolicited wakeup. |
+| Claude Code **2.1.310** | Official hook-to-MCP input qualification preserves native permission denial. Actual same-process `/clear` creates a new lifetime/mailbox and `/compact` preserves them, using one host/MCP process and a loopback provider. | The native lifecycle probe explicitly excludes monitor delivery and authenticated-model acceptance. Automatic monitor idle/busy/restart and prolonged-offline notice consumption still need their own evidence. |
+| OpenCode **2.2.5** libraries/plugin API | Official loader/CodeMode integration, packed root plugin and real container recreation; fixture-based synthetic admission/context proof and durable offline-notice recovery. | The cited CI run skips three optional official CLI cases: packed native-plugin automatic admission, URL-only native setup, and native plugin-manager installation. Interactive TUI/authenticated-model notice acceptance is not established by the library/API fixtures. |
 
-## Simulated transport matrix
+The [verification snapshot](verification.md#connector-qualification) links each
+source revision and CI run. The older [Pi 1.4 probe](probes/pi-1.4/README.md)
+remains a historical archive: its Antigravity child was synthetic and its void
+native API left the item pending. That result does not describe every later Pi
+connector path.
 
-`npm run demo` tests all 16 type-family routes over the real HTTP service into durable reference inboxes, using eight distinct identities (two per family). All inputs remain locally pending; there is no native CLI execution or LLM call. This verifies type-neutral exact-address transport, not any cell of the real-harness matrix below.
+Production connector acceptance requires the selected automatic native mechanism.
+Cooperative receive/ACK remains useful diagnostic evidence, not a silent
+production fallback when automatic readiness is blocked. Never type into a TUI,
+abort a human turn or bypass permissions to make delivery appear successful.
+
+## Transport matrices already exercised
+
+### Reference adapters
+
+`npm run demo` covers all 16 type-family routes over real HTTP into eight durable
+reference inboxes. Native CLI input and LLM calls are absent.
+
+### Packaged connectors
+
+[PR #24](https://github.com/matuto-ai/psst/pull/24) added the actual npm-packed
+four-connector matrix against a trusted-TLS broker and form-authenticated admin
+approval. Two independent identities per connector cover 12 cross-family and
+four same-family routes, then repeat them after process recreation: **32 route
+checks**. The original installation credentials persist; the second round uses
+fresh native lifetimes.
+
+Host events/contexts are synthetic and the test invokes cooperative ACKs. This
+does not prove same-native-session pending-inbox recovery or automatic native
+input. The current broker CI still pins that older connector cohort; its pass
+does not establish compatibility of all newer connector heads together. See the
+[exact matrix pins](verification.md#packaged-connector-matrix).
 
 ## Directed real-harness matrix
 
-All entries below are **not certified** by this broker-core implementation. Diagonal cells mean two distinct same-family session incarnations, not self-messaging or shared IDs.
+All entries remain **not certified** for the complete issue #11 acceptance set.
+Diagonal cells require distinct same-family sessions. Neither reference routes,
+packaged cooperative routes nor isolated one-host probes fill these cells.
 
 | Sender → receiver | Pi | Antigravity CLI | Claude Code | OpenCode |
 | --- | --- | --- | --- | --- |
@@ -34,13 +76,36 @@ All entries below are **not certified** by this broker-core implementation. Diag
 | Claude Code | Not certified | Not certified | Not certified | Not certified |
 | OpenCode | Not certified | Not certified | Not certified | Not certified |
 
-The release record for each supported cell must name both pinned CLI versions, adapter revisions, mode (`native_followup`, `managed_serial`, or `cooperative_pull`), exact-session topology, observed model-visible provenance, prompt/draft/abort/race tests, and native acceptance/crash-window behavior. Cooperative mode must explicitly disclose that it has no unsolicited wakeup guarantee. Local injection uncertainty pauses that FIFO head until supported reconciliation/operator resolution; it never produces a fake broker task state.
+Each completed cell needs both pinned CLI versions, connector revisions, the
+actual mode and exact-session topology, plus retained evidence for source labels
+in model input, non-interruption, human-prompt preservation, zero-token heartbeat
+and native acceptance/crash windows. Include concurrent three-party exchange,
+offline recipients, model switches and restart. Record uncertain effects rather
+than automatically replaying an ambiguous native submission.
 
 ## Environment evidence boundary
 
-- **Locally executable:** Node 24.19.0 / SQLite 3.53.3 contract, store, HTTP/TLS, restart/backup, and reference/fake-harness suites available in this repository. Use the exact commit's test output, not this list, as pass evidence.
-- **Container build/runtime:** not locally run in the implementation executor because Podman/Docker were unavailable. Docker build/test and nonroot isolated entrypoint smoke passed in the linked [verification record](verification.md#recorded-ci-evidence). Actual Ubuntu rootless Podman 4.9.3 private-bind-volume/restart smoke also passed in CI. Local Podman remains unrun; check a new exact commit's workflow conclusion before carrying that evidence forward.
-- **Fedora Quadlet/SELinux, separate same-host agent containers, and two-host LAN:** templates/gates only; not established by local HTTP, Docker CI, or the bounded Ubuntu rootless Podman smoke.
-- **Human's installed CLIs and workstation:** not accessed, installed, configured, or used for these tests.
+- **Broker/runtime:** the current cited CI passes pinned Node 24.19.0 / SQLite
+  3.53.3 tests, Docker/nonroot packaging, browser/admin fixtures and rootless
+  Podman jobs. These are runner results, not a new local or user-host run.
+- **Same-host container transport:** CI exercises a separate rootless container
+  reaching host HTTPS with CA/SAN/auth checks on the tested route, plus
+  container-removal/recreation persistence fixtures. This is narrower than
+  universal rootless networking or a four-native-host topology.
+- **Still unverified:** Fedora SELinux `:Z`, Quadlet/systemd/autostart, other
+  Podman network modes, the user's proxy/sandbox topology, and two-host LAN
+  acceptance. A container network test does not replace the two-host scenario.
+- **Authenticated user environment:** the cited isolated fixtures use disposable
+  data and local providers where needed. They do not certify the user's installed
+  CLIs, login, real model response or production setup.
 
-A broker-core draft is useful before all native adapter gates pass, but it is not a universal four-CLI release. Keep the remaining issues open until their own acceptance evidence exists.
+Keep [#11](https://github.com/matuto-ai/psst/issues/11) open for the integrated
+packaging/recovery/native gates and [#29](https://github.com/matuto-ai/psst/issues/29)
+open for remaining lifecycle/offline-notice acceptance. The connector trackers
+remain [Pi #12](https://github.com/matuto-ai/pi-psst-connector/issues/12),
+[Antigravity #8](https://github.com/matuto-ai/antigravity-psst-connector/issues/8),
+[Claude #11](https://github.com/matuto-ai/claude-psst-connector/issues/11) and
+[OpenCode #8](https://github.com/matuto-ai/opencode-psst-connector/issues/8).
+Source merges, green fixture CI and published artifacts are distinct from those
+remaining acceptance gates.
+
