@@ -152,4 +152,3 @@ This establishes the bounded **Ubuntu rootless container** scenario only. It doe
 ## Archived Pi runtime probe
 
 The [Pi 1.4 probe](probes/pi-1.4/README.md) preserves an actual official Pi runtime run with the pinned historical broker `e015a6f5d7cc32d0c0a90bd633fab8d94195417a`, a deterministic local provider, injected Terminal and synthetic managed Antigravity child. It observed held-tool/human-Enter ordering before native follow-up, provider-visible untrusted provenance, heartbeat independence, and old-session shutdown. The Pi item deliberately remains pending because the native void API is not an acceptance receipt. This separate manually run probe is **not part of `npm test`**, a production Pi adapter, a physical PTY test, or a four-CLI compatibility certification. Its source manifest refuses different named bytes; use its exact snapshots rather than silently running against a later shared-runtime revision.
-

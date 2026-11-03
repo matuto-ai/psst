@@ -108,4 +108,3 @@ remain [Pi #12](https://github.com/matuto-ai/pi-psst-connector/issues/12),
 [OpenCode #8](https://github.com/matuto-ai/opencode-psst-connector/issues/8).
 Source merges, green fixture CI and published artifacts are distinct from those
 remaining acceptance gates.
-
