@@ -203,13 +203,37 @@ test('actual Pi lifecycle preserves resumable mail and truthful real-time presen
     const stored = await until(() => readInbox(child.inboxFile, sent.message_id), result => result?.state === 'consumed' && result?.native_receipt?.startsWith('pi:'), 'actual native receipt');
     assert.equal(JSON.parse(stored.envelope).content.text, text);
     await until(() => records(child.sessionFile).filter(row => row.type === 'custom_message' && row.customType === 'psst-agent-message' && row.details?.message_id === sent.message_id), rows => rows.length === 1, 'one actual session JSONL entry');
-    await until(() => records(child.observations).filter(event => event.event === 'provider_call'), events => events.some(event => JSON.stringify(event.content).includes(text)), 'source content in actual local-provider context');
+    const input = await until(() => records(child.observations).filter(event => event.event === 'provider_call').find(event => JSON.stringify(event.content).includes(text)), Boolean, 'source content in actual local-provider context');
+    const serialized = JSON.stringify(input.content);
+    assert.ok(serialized.includes('Broker message from AI agent ' + peerInbox.identity.client_id), 'actual model input labels the peer source');
+    assert.ok(serialized.includes(sent.message_id), 'actual model input identifies the exact message');
   }
   const a = await launch('native-A'), b = await launch('native-B');
   assert.notEqual(a.pid, b.pid); assert.notEqual(a.sessionId, b.sessionId); assert.notEqual(a.clientId, b.clientId);
   const initialA = await observe('two-native-sessions', a); await observe('two-native-sessions', b);
   const seedA = await send(a, 'native lifecycle seed A'), seedB = await send(b, 'native lifecycle seed B');
   await received(a, seedA, 'native lifecycle seed A'); await received(b, seedB, 'native lifecycle seed B');
+  // Real negotiated heartbeats renew while both native hosts remain idle. They
+  // must not consume any provider call or start an artificial model turn.
+  for (const child of [a, b]) await until(() => records(child.observations).filter(event => event.event === 'agent_settled'), events => events.length > 0, 'native model turn settled');
+  const calls = child => records(child.observations).filter(event => event.event === 'provider_call').length;
+  const beforeCalls = [calls(a), calls(b)], idleHeartbeat = Date.parse((await row(a)).last_heartbeat_at);
+  await until(() => row(a), snapshot => Date.parse(snapshot.last_heartbeat_at) >= idleHeartbeat + limits.heartbeat_seconds * 1000, 'real idle heartbeat renewal');
+  assert.deepEqual([calls(a), calls(b)], beforeCalls, 'heartbeat renewal uses zero model/provider calls');
+  report.zero_token_heartbeat = { verified: true, provider_calls_during_renewal: 0, negotiated_seconds: limits.heartbeat_seconds };
+  retain();
+  const selectedIdentity = a.clientId, selectedSession = a.sessionId;
+  await a.call('write', { text: '/model faux-2\r' });
+  await until(() => records(a.observations).filter(event => event.event === 'model_select').at(-1), event => event?.model_id === 'faux-2', 'actual native model selection');
+  const switched = await until(() => row(a), snapshot => snapshot.model.id === 'faux-2', 'native model selection updates broker metadata');
+  assert.equal(switched.client_id, selectedIdentity);
+  assert.equal(a.sessionId, selectedSession);
+  const afterSwitch = await send(a, 'native delivery after actual model switch');
+  await received(a, afterSwitch, 'native delivery after actual model switch');
+  report.native_model_switch = { verified: true, preserved_native_conversation: true, preserved_broker_identity: true,
+    actual_provider_context_after_switch: true, model: 'faux-2' };
+  report.native_source_labels_verified = true;
+  retain();
   const starts = records(a.observations).filter(event => event.event === 'session_start').length;
   const epoch = f.store.db.prepare('SELECT epoch FROM sessions WHERE id=?').get(a.clientId).epoch;
   await a.call('write', { text: '/reload\r' });

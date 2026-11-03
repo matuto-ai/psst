@@ -78,10 +78,14 @@ All 12 cross-family and four distinct-session same-family routes assert exact
 sender, recipient, body and untrusted-agent provenance. Delivered items remain
 pending with no fabricated native receipt. The test removes/recreates recipients,
 queues four offline messages, kills/restarts the broker, verifies persistent
-identities/journals/dedupe, and runs three concurrent routes. Broker container
-replacement retains its allocated private service IP; arbitrary dynamic service-IP
-churn and rootless DNS/route-cache behavior are not certified. Model metadata changes
-preserve identity; this is not an actual host model-switch proof. Containers are
+identities/journals/dedupe, and runs three concurrent routes. The actual broker
+process is killed and restarted in its existing container/network identity.
+Replacing that rootless network namespace while old peers remain alive failed a
+separate exploratory reconnect probe; it is not certified by this restart check.
+No static-address, host-routing or security workaround is applied. Model metadata
+changes preserve identity in this reference topology. The separate actual Pi
+probe verifies native model selection with identity continuity, source labels
+in provider input, and an idle heartbeat renewal with zero provider calls. Containers are
 removed before their bind-mounted data is discarded.
 
 The two isolated-topology jobs are required by the fail-closed aggregate. Summaries
