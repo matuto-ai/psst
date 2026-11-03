@@ -10,7 +10,7 @@ concurrency:
   cancel-in-progress: ${{ github.event_name != 'release' }}
 jobs:
   verify:
-    needs: [local-tests, container, rootless-podman, cooperative-transport]
+    needs: [local-tests, container, rootless-podman, cooperative-transport, current-transport]
     if: ${{ always() }}
     runs-on: ubuntu-24.04
     timeout-minutes: 2
@@ -21,7 +21,8 @@ jobs:
           CONTAINER_RESULT: ${{ needs.container.result }}
           PODMAN_RESULT: ${{ needs.rootless-podman.result }}
           TRANSPORT_RESULT: ${{ needs.cooperative-transport.result }}
-        run: test "$LOCAL_RESULT" = success && test "$CONTAINER_RESULT" = success && test "$PODMAN_RESULT" = success && test "$TRANSPORT_RESULT" = success
+          CURRENT_RESULT: ${{ needs.current-transport.result }}
+        run: test "$LOCAL_RESULT" = success && test "$CONTAINER_RESULT" = success && test "$PODMAN_RESULT" = success && test "$TRANSPORT_RESULT" = success && test "$CURRENT_RESULT" = success
   local-tests:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -216,3 +217,53 @@ jobs:
       # Synthetic host events + cooperative receive/ack are not authenticated model
       # acceptance. Official host/Compose/Podman gates remain in each repository;
       # OpenCode automatic admission and Antigravity sign-in remain separate gates.
+  current-transport:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          repository: matuto-ai/pi-psst-connector
+          ref: 9dd2f549da4a3eec43c1c2288a952ce1378458c8
+          path: .current-matrix/pi
+          persist-credentials: false
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          repository: matuto-ai/claude-psst-connector
+          ref: a392f8823f76385c717662fdd2eeea7cc556d126
+          path: .current-matrix/claude
+          persist-credentials: false
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          repository: matuto-ai/antigravity-psst-connector
+          ref: 2a14f88058c2077a4a315ed9c22098adbea5e82c
+          path: .current-matrix/antigravity
+          persist-credentials: false
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          repository: matuto-ai/opencode-psst-connector
+          ref: 36110bdeb15ca15e52106d6d0af9fc71beee3ab6
+          path: .current-matrix/opencode
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '24.19.0'
+      - name: Install pinned Pi renderer dependency without peer hosts or scripts
+        working-directory: .current-matrix/pi
+        run: npm ci --ignore-scripts --legacy-peer-deps --no-audit --no-fund
+      - name: Install pinned OpenCode runtime schema dependency without host or scripts
+        working-directory: .current-matrix/opencode
+        run: npm ci --ignore-scripts --omit=dev --no-audit --no-fund
+      - name: Check current matrix sources
+        run: for source in integration/current-*.mjs; do node --check "$source"; done
+      - name: Verify current packed connectors with explicit synthetic native boundaries
+        env:
+          PSST_CURRENT_MATRIX_SOURCES: '{"pi":".current-matrix/pi","claude-code":".current-matrix/claude","antigravity-cli":".current-matrix/antigravity","opencode":".current-matrix/opencode"}'
+        run: node --test integration/current-connector-matrix.test.mjs
+      # Real packages, broker/TLS, inboxes, monitor/waiter and operation guards.
+      # Synthetic host input/context, native receipts and model read/ACK actions.
+      # The legacy cooperative cohort remains an independent compatibility lane.

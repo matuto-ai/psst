@@ -40,7 +40,7 @@ terminal close remains a different operation.
 ### Packaged connector matrix
 
 [PR #24](https://github.com/matuto-ai/psst/pull/24) introduced
-`integration/connector-matrix.test.mjs`. The current cited broker workflow keeps
+`integration/connector-matrix.test.mjs`. The cited broker workflow keeps
 these immutable pins:
 
 | Connector | Revision in the cooperative matrix |
@@ -56,6 +56,72 @@ These **32 route checks** use real packages, TLS and broker storage, but synthet
 native contexts and test-driven cooperative ACKs. They do not certify the latest
 four connector revisions together, same-native-session pending-inbox recovery,
 automatic final-hop input or authenticated model behavior.
+
+### Current packaged cohort with synthetic native boundaries
+
+The separate `current-transport` job now runs
+[`integration/current-connector-matrix.test.mjs`](../integration/current-connector-matrix.test.mjs)
+against the broker revision under test. The historical cooperative job above is
+retained unchanged as a backwards-compatibility check. This newer job pins:
+
+| Connector | Current-cohort revision |
+| --- | --- |
+| Pi | `9dd2f549da4a3eec43c1c2288a952ce1378458c8` |
+| Claude | `a392f8823f76385c717662fdd2eeea7cc556d126` |
+| Antigravity | `2a14f88058c2077a4a315ed9c22098adbea5e82c` |
+| OpenCode | `36110bdeb15ca15e52106d6d0af9fc71beee3ab6` |
+
+The test packs each checkout under its current npm name, uses its real approval
+helper against the real TLS/admin service, and starts two isolated modeled native
+owners per family. Transport, native connector tools and durable inboxes are
+production package code. Native host events, conversations, history/API storage
+and model responses are test fixtures:
+
+- Pi invokes the real extension and automatic delivery code, with a synthetic
+  append-backed custom-message history. No diagnostic manual mode is enabled.
+- OpenCode invokes its current `setupNativePlugin` and selected-session presence,
+  with synthetic 2.2.5 context/storage and exact persisted synthetic-queue receipts.
+  No receive/ACK fallback is installed.
+- Claude runs actual hook, MCP and monitor subprocesses. A real body-free monitor
+  notice triggers a simulated native-model receive call; the test then explicitly
+  acknowledges the exact read item. Monitor stdout is not model acceptance.
+- Antigravity uses actual native binding/tool guards and the package's native
+  waiter. After its body-free notice, a simulated model reads and explicitly
+  acknowledges the exact item. A waiter return is not native CLI/model acceptance.
+
+Assertions cover **39 deliveries**: all 16 directed routes twice, four pending
+inbox restarts under the same modeled native owner, and a concurrent three-party
+cycle. They check exact message/sender/recipient/provenance/content, absence from
+every unrelated inbox, one automatic Pi/OpenCode native capture per message,
+consumed local state, family-specific native-receipt versus explicit-read
+semantics, original installation credential
+reuse and no repeated enrollment. During pending-restart checks, broker delivery
+completes while the modeled native boundary is held; restart preserves the exact
+inbox identity/envelope and does not release that boundary. Claude restarts only
+its MCP/monitor children so no owner PID or lifetime is forged. The second route
+round intentionally uses fresh native lifetimes, not a claimed native resume.
+
+Run locally after installing only the locked fixture dependencies (Pi uses
+`npm ci --ignore-scripts --legacy-peer-deps`; OpenCode uses
+`npm ci --ignore-scripts --omit=dev`):
+
+```sh
+PSST_CURRENT_MATRIX_SOURCES='{"pi":"/checkouts/pi","claude-code":"/checkouts/claude","antigravity-cli":"/checkouts/antigravity","opencode":"/checkouts/opencode"}' \
+  node --test integration/current-connector-matrix.test.mjs
+```
+
+Use the repository's pinned Node 24.19.0 runtime. These source checkouts are inputs
+to `npm pack`; this is not evidence that the new npm names have been published or
+installed by a native package manager. The job has no authenticated models or
+official CLI processes and does not fill any native compatibility-matrix cell.
+Actual busy/draft/permission/abort/model-switch behavior, real-native crash
+windows and user-environment acceptance remain open under #11 and the connector
+trackers. Native operation replay and uncertain-final-hop fault injection are not
+new assertions in this cohort test; the separate broker/connector suites retain
+their own idempotency and ambiguity coverage. In particular, a consumed Claude
+native permit must not be replaced to manufacture a successful replay.
+Exact-head CI is required for each candidate; the historical CI links
+above must not be read as execution evidence for this newer job.
 
 ### Connector qualification
 
