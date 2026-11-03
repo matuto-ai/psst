@@ -10,6 +10,7 @@ import { promisify } from 'node:util';
 import { createInterface } from 'node:readline';
 import { randomUUID, createHash } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
+import { backupDatabase } from '../scripts/backup.mjs';
 import { approvalTlsFixture } from '../test/approval-tls-fixture.mjs';
 
 const execute = promisify(execFile);
@@ -211,6 +212,35 @@ test('current four packages: directed transport, synthetic native boundaries, pe
         await recipient.call('set_admission', { enabled: true });
         await finish(item);
       }
+      // An online SQLite snapshot retains delivered-but-native-pending mail.
+      // Restore the broker immediately, before any new connector attachment, so
+      // journals and snapshot describe the same recovery point. Each connector
+      // must reconcile the fenced epoch itself; no test changes its journal.
+      const retained = [];
+      const epochs = new Map(all.map(peer => [peer.id, f.store.db.prepare('SELECT epoch FROM sessions WHERE id=?').get(peer.id).epoch]));
+      for (let index = 0; index < types.length; index++) {
+        const recipient = sessions[types[index]][0], sender = sessions[types[(index + 1) % types.length]][0];
+        await recipient.call('set_admission', { enabled: false });
+        const item = await send(sender, recipient, `broker snapshot recovery ${recipient.type}`);
+        const before = await stored(item);
+        assert.equal(before.local_state, 'pending'); assert.equal(before.native.observed, false);
+        retained.push({ item, before });
+      }
+      const snapshot = join(f.directory, 'current-cohort-snapshot.sqlite');
+      await backupDatabase(f.store.path, snapshot);
+      await f.restart({ snapshot });
+      for (const peer of all) {
+        await eventually(() => f.store.db.prepare('SELECT epoch FROM sessions WHERE id=?').get(peer.id).epoch,
+          epoch => epoch > epochs.get(peer.id), `${peer.type} connector reconciles restored broker epoch`);
+        assert.equal((await peer.call('broker_identity')).client_id, peer.id);
+      }
+      for (const { item, before } of retained) {
+        const after = await stored(item);
+        assert.deepEqual(after.envelope, before.envelope);
+        assert.equal(after.local_state, 'pending'); assert.equal(after.native.observed, false);
+        await item.recipient.call('set_admission', { enabled: true });
+        await finish(item);
+      }
       const cycle = [sessions.pi[0], sessions.opencode[0], sessions['claude-code'][0]];
       const concurrent = await Promise.all(cycle.map((sender, index) => send(sender, cycle[(index + 1) % cycle.length], 'concurrent three-party exchange')));
       await Promise.all(concurrent.map(finish));
@@ -225,7 +255,7 @@ test('current four packages: directed transport, synthetic native boundaries, pe
     for (const type of types) assert.equal(createHash('sha256').update(readFileSync(join(approved[type].connectionFile, '..', 'token'))).digest('hex'), hashes[type]);
   }
   assert.equal(identities.size, 16);
-  assert.equal(deliveries, 39);
+  assert.equal(deliveries, 43);
   assert.equal(f.approval.list().length, 4);
-  t.diagnostic('39 real transport deliveries: 32 directed routes, four same-native-owner pending restarts, three concurrent routes. Native boundaries/model reads are synthetic; no authenticated CLI/model or deployment acceptance.');
+  t.diagnostic('43 real transport deliveries: 32 directed routes, four same-native-owner pending restarts, four broker-snapshot recoveries, three concurrent routes. Native boundaries/model reads are synthetic; no authenticated CLI/model or deployment acceptance.');
 });

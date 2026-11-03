@@ -108,9 +108,9 @@ and model responses are test fixtures:
   waiter. After its body-free notice, a simulated model reads and explicitly
   acknowledges the exact item. A waiter return is not native CLI/model acceptance.
 
-Assertions cover **39 deliveries**: all 16 directed routes twice, four pending
-inbox restarts under the same modeled native owner, and a concurrent three-party
-cycle. They check exact message/sender/recipient/provenance/content, absence from
+Assertions cover **43 deliveries**: all 16 directed routes twice, four pending
+inbox restarts under the same modeled native owner, four broker-snapshot restores
+with pending local inboxes, and a concurrent three-party cycle. They check exact message/sender/recipient/provenance/content, absence from
 every unrelated inbox, one automatic Pi/OpenCode native capture per message,
 consumed local state, family-specific native-receipt versus explicit-read
 semantics, original installation credential
@@ -242,3 +242,10 @@ This establishes the bounded **Ubuntu rootless container** scenario only. It doe
 ## Archived Pi runtime probe
 
 The [Pi 1.4 probe](probes/pi-1.4/README.md) preserves an actual official Pi runtime run with the pinned historical broker `e015a6f5d7cc32d0c0a90bd633fab8d94195417a`, a deterministic local provider, injected Terminal and synthetic managed Antigravity child. It observed held-tool/human-Enter ordering before native follow-up, provider-visible untrusted provenance, heartbeat independence, and old-session shutdown. The Pi item deliberately remains pending because the native void API is not an acceptance receipt. This separate manually run probe is **not part of `npm test`**, a production Pi adapter, a physical PTY test, or a four-CLI compatibility certification. Its source manifest refuses different named bytes; use its exact snapshots rather than silently running against a later shared-runtime revision.
+
+## Integrated packaging and recovery candidate
+
+The [original issue #11 acceptance ledger](issue11-acceptance.md) documents the real
+prior-entrypoint upgrade/restore check, eight-container directed TLS topology and
+remaining original native/Fedora/two-host dependencies. Historical run links above
+are not execution evidence for these new checks; verify the current PR head.
