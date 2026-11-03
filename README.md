@@ -1,5 +1,10 @@
 # Psst
 
+**Psst** is the public name of the former **AI Agent Message Broker**. The private
+package identifier `ai-agent-msg-broker` and existing storage/configuration names
+remain for compatibility. Branding does not create new sessions or move data.
+See the [technical-name inventory and migration/rollback plan](docs/branding-migration.md).
+
 A generic, authenticated LAN message broker for independent AI CLI sessions. It owns the recipient registry, background presence, and durable **message delivery**—not conversations, tasks, model progress, or agent orchestration.
 
 **Status: pre-1.0 development.** The broker implementation, reference adapter and local stdio facade are on `main`. Version 0.6.0 is a source candidate until its release workflow succeeds. Native Pi, Antigravity CLI, Claude Code and OpenCode installation and receiving behavior must be validated separately; protocol fixtures and CI are not evidence of acceptance in a user environment.

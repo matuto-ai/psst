@@ -14,15 +14,16 @@ WORKDIR /app
 COPY --from=base /app /app
 COPY test ./test
 COPY fixtures ./fixtures
+COPY deploy/config.proxy-container.example.json ./deploy/config.proxy-container.example.json
 COPY openapi.json compose.yaml Containerfile README.md CHANGELOG.md ./
-COPY docs/docker-release.md ./docs/docker-release.md
+COPY docs/docker-release.md docs/branding-migration.md ./docs/
 RUN openssl version && npm run check && npm test
 
 FROM base AS runtime
 # Deny-all connectivity bootstrap. Operator-mounted /run/broker overrides these files.
 COPY --chown=node:node --chmod=0600 deploy/config.proxy-container.example.json /run/broker/config.json
 COPY --chown=node:node --chmod=0600 deploy/credentials.empty.json /run/broker/credentials.json
-LABEL org.opencontainers.image.title="AI Agent Message Broker" \
+LABEL org.opencontainers.image.title="Psst" \
       org.opencontainers.image.description="Authenticated opaque message delivery to durable adapter inboxes" \
       org.opencontainers.image.source="https://github.com/matuto-ai/psst" \
       org.opencontainers.image.licenses="MIT"
