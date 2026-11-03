@@ -1,8 +1,12 @@
-# AI Agent Message Broker — v1 specification
+# Psst — v1 specification (original AI Agent Message Broker contract)
 
 Status: **proposed implementation contract; not an implemented feature list**  
 Research baseline: 2026-10-23  
-Target repository: `brunoorsolon/ai-agent-msg-broker`
+Historical target repository at the research baseline: `brunoorsolon/ai-agent-msg-broker`
+
+Current source: `matuto-ai/psst`. This baseline preserves its original technical
+contract; see the [branding inventory and compatibility plan](branding-migration.md)
+for retained identifiers and current installation guidance.
 
 ## 1. Purpose and boundaries
 

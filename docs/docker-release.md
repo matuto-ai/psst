@@ -103,3 +103,10 @@ advanced legacy path**, not a prerequisite for native URL-only setup. It stages
 separate credentials/bundles for deliberately selected legacy integrations;
 creating and activating them still requires an explicit operator decision. Keep
 existing working authorization and persistent client state when upgrading.
+
+## Names and existing installations
+
+Psst was formerly AI Agent Message Broker. Existing package, container, volume
+and environment names are intentionally retained. Before changing an image path,
+Compose project or installation directory, follow the [inventory, continuity and
+rollback plan](branding-migration.md). A name change is not a database migration.

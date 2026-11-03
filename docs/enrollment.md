@@ -1,4 +1,4 @@
-# Enroll the four native connectors
+# Enroll the four native connectors with Psst
 
 This is **initial enrollment for an existing deny-all broker**, not a deployment or migration tool. The broker's health check only proves reachability. Before authenticated tools work, an operator must create credentials, activate the verifier configuration, and install a native connector in each client sandbox.
 
@@ -22,7 +22,9 @@ node scripts/enroll-clients.mjs \
 
 Choose your real HTTPS broker origin; a path prefix, HTTP, embedded username/password, query, or fragment is rejected. The destination must **not exist**, and its parent must already be private and owned by the current account. Symlinks are refused. The script does not change permissions or ownership of existing paths.
 
-To avoid changing host Node, run the same reviewed script with the already-published broker image's pinned Node runtime. The script is mounted from your checkout because it is **not included in the original 0.1.0 image**:
+To avoid changing host Node, the historical example below uses the original
+broker image's pinned Node runtime. Keep an already verified local image/digest;
+this document does not reverify registry availability or recommend a downgrade. The script is mounted from your checkout because it is **not included in the original 0.1.0 image**:
 
 ```sh
 # Run from the reviewed broker checkout. No broker data directory is mounted here.
@@ -41,7 +43,7 @@ docker run --rm --network none --read-only \
   --create-credentials
 ```
 
-The existing image name remains intentional; a source repository rename alone does not create a new registry image. The generator uses only Node built-ins, so this step needs no network. If your broker runs as UID 1000 but your operator account does not, stop and arrange ownership deliberately before activating anything; do not make credentials world-readable as a workaround.
+The existing image name remains intentional; a source repository rename alone does not create a new registry image. See the [name inventory and continuity plan](branding-migration.md). The generator uses only Node built-ins, so this step needs no network. If your broker runs as UID 1000 but your operator account does not, stop and arrange ownership deliberately before activating anything; do not make credentials world-readable as a workaround.
 
 Generated layout:
 
