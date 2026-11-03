@@ -1,6 +1,99 @@
-# Development-preview verification
+# Verification evidence
 
 This record distinguishes executable broker/reference evidence from real-harness and deployment gates. All tests use isolated temporary data and disposable test-only credentials/certificates; they do not provision ongoing access.
+
+## Evidence snapshot: 2026-11-03
+
+This snapshot supersedes the old checkpoint as a navigation guide, not as a claim
+that its tests ran at newer revisions. It records already-completed CI; preparing
+this documentation did not rerun native hosts or deploy anything. The linked
+commits fix each observation in time. A later change needs its own verification.
+
+### Broker and packaging
+
+Psst commit [`c579161cefcece5363c70c719ff73eafbe10c216`](https://github.com/matuto-ai/psst/commit/c579161cefcece5363c70c719ff73eafbe10c216)
+passed [Verify run 41687208386](https://github.com/matuto-ai/psst/actions/runs/41687208386).
+Its `local-tests` log reports **288 passed, zero failures/skips**, on Node
+24.19.0 with the SQLite 3.53.3 gate. All four prerequisite jobs and the aggregate
+`verify` job succeeded:
+
+| Job | Exercised boundary |
+| --- | --- |
+| `local-tests` | Syntax, pinned runtime and full broker/reference tests, including presence/lifecycle and retention fixtures. |
+| `container` | Docker build/tests, nonroot entrypoint, no-credential bootstrap, published port/persistent volume, Compose, Chromium admin behavior and approval/migration fixtures. |
+| `rootless-podman` | Private bind mounts/restart, copied isolated runtime, broker-only bootstrap, separate-container host HTTPS and recreated approval-data volume. |
+| `cooperative-transport` | Four actual packed connectors against TLS/admin approval, with 16 directed routes before and after recreation. |
+
+The [workflow at that commit](https://github.com/matuto-ai/psst/blob/c579161cefcece5363c70c719ff73eafbe10c216/.github/workflows/verify.yaml)
+defines these checks. The separate-container HTTPS result covers the tested
+host-interface/rootless route, not Fedora Quadlet/SELinux, every Podman networking
+mode, the user's network or a two-host LAN.
+
+Presence/resumable-disconnect and pending-delivery event support was merged in
+[PR #33](https://github.com/matuto-ai/psst/pull/33). Fake-clock, authenticated HTTP
+and reference-child-process tests support that backend result. Native event
+consumption and complete host lifecycle acceptance remain separate under
+[#29](https://github.com/matuto-ai/psst/issues/29); see [presence.md](presence.md)
+for the current contract. Resumable disconnect preserves identity/mail while
+terminal close remains a different operation.
+
+### Packaged connector matrix
+
+[PR #24](https://github.com/matuto-ai/psst/pull/24) introduced
+`integration/connector-matrix.test.mjs`. The current cited broker workflow keeps
+these immutable pins:
+
+| Connector | Revision in the cooperative matrix |
+| --- | --- |
+| Pi | `f3d3bfc5cd17c10697d52e892f88c06a22ee2b16` |
+| Antigravity | `f3e0da54134bc03bd81f3c06c5ccc385d484b95e` |
+| Claude | `e04de626a0d01dc6345eb750364e719dd59cc319` |
+| OpenCode | `55b297525e6f931ab5c6ac377d1d8ccab8155bfb` |
+
+Two identities per family exercise all 16 routes, repeated after process
+recreation with persisted installation authorization and fresh native lifetimes.
+These **32 route checks** use real packages, TLS and broker storage, but synthetic
+native contexts and test-driven cooperative ACKs. They do not certify the latest
+four connector revisions together, same-native-session pending-inbox recovery,
+automatic final-hop input or authenticated model behavior.
+
+### Connector qualification
+
+These independent post-merge runs passed at the listed revisions. They use
+different fixtures and cannot be combined into a claim that the full directed
+native matrix passed.
+
+| Connector revision | CI evidence | Scope and explicit limit |
+| --- | --- | --- |
+| [Pi `9dd2f549da4a3eec43c1c2288a952ce1378458c8`](https://github.com/matuto-ai/pi-psst-connector/tree/9dd2f549da4a3eec43c1c2288a952ce1378458c8) | [41672214404](https://github.com/matuto-ai/pi-psst-connector/actions/runs/41672214404) | Official Pi 1.4.0 loader/tool/history probes; actual PTY URL-only setup, TLS/admin approval and container recreation. The host-card probe covers persisted offline-event rendering/model-context conversion and exact event ACK using a fixture event/client. No authenticated-model acceptance. |
+| [Antigravity `2a14f88058c2077a4a315ed9c22098adbea5e82c`](https://github.com/matuto-ai/antigravity-psst-connector/tree/2a14f88058c2077a4a315ed9c22098adbea5e82c) | [41687147202](https://github.com/matuto-ai/antigravity-psst-connector/actions/runs/41687147202) | Official CLI 1.4.7 build 5900205422411776 validates/installs the plugin. Network-isolated actual-plugin root/compact/new/presence probes pass with a loopback fake provider. Readable presence output and explicit ACK reach that provider flow; unattended wakeup/authenticated-model acceptance remain unverified. |
+| [Claude `b25b4013afd45041c390616e55a5cb07c9ebb62d`](https://github.com/matuto-ai/claude-psst-connector/tree/b25b4013afd45041c390616e55a5cb07c9ebb62d) | [41669361781](https://github.com/matuto-ai/claude-psst-connector/actions/runs/41669361781) | Official Claude 2.1.310 hook-to-MCP qualification preserves native permission denial. Same-process clear/compact checks use one host/MCP process and a loopback provider. The result explicitly reports `monitor_delivery_tested:false` and `authenticated_model:false`. |
+| [OpenCode `36110bdeb15ca15e52106d6d0af9fc71beee3ab6`](https://github.com/matuto-ai/opencode-psst-connector/tree/36110bdeb15ca15e52106d6d0af9fc71beee3ab6) | [41687130474](https://github.com/matuto-ai/opencode-psst-connector/actions/runs/41687130474) | Official 2.2.5 libraries/loader/CodeMode and synthetic API/context fixtures; real Docker recreation. The integration stage reports **25 passed, 3 skipped**: the optional official CLI automatic-admission, native setup and plugin-manager installation tests did not run. Native TUI/authenticated-model notice acceptance remains unverified. |
+
+The corresponding executable sources are
+[Pi host-card](https://github.com/matuto-ai/pi-psst-connector/blob/9dd2f549da4a3eec43c1c2288a952ce1378458c8/test/native-card-host.probe.mjs),
+[Antigravity actual-plugin runner](https://github.com/matuto-ai/antigravity-psst-connector/blob/2a14f88058c2077a4a315ed9c22098adbea5e82c/scripts/native-contract-proof/run-actual.sh),
+[Claude native lifecycle](https://github.com/matuto-ai/claude-psst-connector/blob/b25b4013afd45041c390616e55a5cb07c9ebb62d/integration/native-lifecycle-probe.mjs)
+and [OpenCode verification workflow](https://github.com/matuto-ai/opencode-psst-connector/blob/36110bdeb15ca15e52106d6d0af9fc71beee3ab6/.github/workflows/verify.yaml).
+Pi, Antigravity and Claude CI use broker integration fixture
+`f32ddc79ec7b812062ed3f6de7b9a0c12a7128f3`; additional approval fixtures and
+OpenCode's vendored fixtures have their own pins. None of these runs proves a
+composed test of every current head against broker `c579161c`.
+
+### Remaining integrated acceptance
+
+[Issue #11](https://github.com/matuto-ai/psst/issues/11) remains open for the
+complete directed native routes and safety/recovery evidence, concurrent
+three-party exchange, offline/model-switch/restart flows, Fedora
+SELinux/Quadlet/autostart and two-host LAN. See
+[the unchanged uncertified native matrix](feasibility.md#directed-real-harness-matrix).
+[Issue #29](https://github.com/matuto-ai/psst/issues/29) retains remaining native
+lifecycle and offline-notice acceptance. No release, deployment, real credential
+or host-configuration change is implied by this evidence record.
+
+The sections below retain the original October checkpoint and its immutable
+historical evidence. Their counts, native limitations and local-tool availability
+describe that checkpoint, not every later connector version.
 
 ## Local checkpoint — 2026-10-23
 
@@ -38,7 +131,7 @@ The exact command output for a later commit supersedes the checkpoint count abov
 
 ## Independent review
 
-The implementation received a separate read-only security/protocol review. Identified defects were fixed with regression tests before the corresponding checkpoint was described as passing. This is not a third-party security certification. Draft PR review and native/deployment acceptance gates remain distinct.
+The implementation received a separate read-only security/protocol review. Identified defects were fixed with regression tests before the corresponding checkpoint was described as passing. This is not a third-party security certification. Source review and native/deployment acceptance gates remain distinct.
 
 `delivered` always means durable adapter-inbox receipt, never native harness acceptance, model processing, conversation completion, or human authorization. See [feasibility.md](feasibility.md) for the deliberately uncertified real-harness matrix.
 
@@ -46,7 +139,7 @@ The implementation received a separate read-only security/protocol review. Ident
 
 Code checkpoint `e015a6f5d7cc32d0c0a90bd633fab8d94195417a` passed both [push run 39972853462](https://github.com/brunoorsolon/ai-agent-msg-broker/actions/runs/39972853462) and [PR run 39972854253](https://github.com/brunoorsolon/ai-agent-msg-broker/actions/runs/39972854253). Job logs confirm 109/109 core tests, 109/109 in the Docker build test stage, six nonroot HTTP tests with `--network none`, a slim nonroot runtime build, and the actual entrypoint smoke with a read-only root filesystem and disposable tmpfs data. No image was pushed to a registry.
 
-The Containerfile pins the two official image digests resolved in that run. Both Docker and Podman ignore files exclude private build-context material. These packaging-only changes receive a new exact-commit CI run; they do not change the shared adapter API/code checkpoint. Native CLI certification, Fedora Quadlet/SELinux and two-host LAN gates remain distinct.
+The Containerfile pins the two official image digests resolved in that run. Both Docker and Podman ignore files exclude private build-context material. The subsequent packaging-only changes received their own exact-commit CI; this historical record does not change the shared adapter API/code checkpoint. Native CLI certification, Fedora Quadlet/SELinux and two-host LAN gates remain distinct.
 
 ### Rootless Podman CI
 
