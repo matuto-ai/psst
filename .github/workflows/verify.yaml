@@ -10,7 +10,7 @@ concurrency:
   cancel-in-progress: ${{ github.event_name != 'release' }}
 jobs:
   verify:
-    needs: [local-tests, container, rootless-podman, cooperative-transport, current-transport]
+    needs: [local-tests, container, rootless-podman, cooperative-transport, current-transport, native-presence]
     if: ${{ always() }}
     runs-on: ubuntu-24.04
     timeout-minutes: 2
@@ -22,7 +22,49 @@ jobs:
           PODMAN_RESULT: ${{ needs.rootless-podman.result }}
           TRANSPORT_RESULT: ${{ needs.cooperative-transport.result }}
           CURRENT_RESULT: ${{ needs.current-transport.result }}
-        run: test "$LOCAL_RESULT" = success && test "$CONTAINER_RESULT" = success && test "$PODMAN_RESULT" = success && test "$TRANSPORT_RESULT" = success && test "$CURRENT_RESULT" = success
+          NATIVE_PRESENCE_RESULT: ${{ needs.native-presence.result }}
+        run: test "$LOCAL_RESULT" = success && test "$CONTAINER_RESULT" = success && test "$PODMAN_RESULT" = success && test "$TRANSPORT_RESULT" = success && test "$CURRENT_RESULT" = success && test "$NATIVE_PRESENCE_RESULT" = success
+  native-presence:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          repository: matuto-ai/pi-psst-connector
+          ref: b87e29851a21be4342f8f4585fc16b1003f6c763
+          path: .native-presence/pi
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '24.19.0'
+      - name: Install locked connector fixture dependencies
+        working-directory: .native-presence/pi
+        run: npm ci --ignore-scripts --legacy-peer-deps --no-audit --no-fund
+      - name: Install pinned official Pi into an isolated fixture
+        run: npm install --prefix "$RUNNER_TEMP/pi-presence-host" --ignore-scripts --no-audit --no-fund @earendil-works/pi-coding-agent@1.4.0
+      - name: Check native lifecycle fixture syntax
+        run: |
+          node --check integration/native-pi-presence.test.mjs
+          node --check integration/native-pi-presence-observer.mjs
+          python3 -c "import ast,pathlib; ast.parse(pathlib.Path('integration/native-pi-presence-pty.py').read_text())"
+      - name: Verify actual native processes and negotiated wall-clock lease
+        run: node --test integration/native-pi-presence.test.mjs
+        env:
+          PI_TEST_INSTALL: ${{ runner.temp }}/pi-presence-host
+          PSST_NATIVE_PI_SOURCE: .native-presence/pi
+          PSST_NATIVE_PRESENCE_EVIDENCE: ${{ runner.temp }}/native-presence.json
+      - name: Keep sanitized lifecycle evidence, including partial progress
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: native-pi-presence
+          path: ${{ runner.temp }}/native-presence.json
+          if-no-files-found: warn
+          retention-days: 7
   local-tests:
     runs-on: ubuntu-24.04
     timeout-minutes: 15

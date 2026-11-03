@@ -37,6 +37,14 @@ consumption and complete host lifecycle acceptance remain separate under
 for the current contract. Resumable disconnect preserves identity/mail while
 terminal close remains a different operation.
 
+The required `native-presence` lane adds an [actual Pi process lifecycle
+regression](native-pi-presence.md): two official CLI owners in PTYs, native
+reload/new/exact-session resume, graceful exit and SIGKILL, real-time negotiated
+lease expiry, pending local inbox recovery and offline queued mail. The local
+provider is controlled; the recorded native process evidence is separate from
+authenticated vendor-model or cross-host acceptance. Each candidate requires its
+own CI result; earlier runs above did not execute this new lane.
+
 ### Packaged connector matrix
 
 [PR #24](https://github.com/matuto-ai/psst/pull/24) introduced
