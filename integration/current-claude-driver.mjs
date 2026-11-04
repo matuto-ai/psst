@@ -129,6 +129,7 @@ export async function createDriver({packageRoot,installation,runtime,nativeId,br
     mcp=createMcp();
     const initialized=await mcp.rpc('initialize',{protocolVersion:'2025-06-18',capabilities:{},clientInfo:{name:'synthetic-current-matrix-host',version:'1'}});
     if(initialized.error)throw Error('matrix_mcp_initialize_failed');
+    if(initialized.result?.serverInfo?.version!==JSON.parse(readFileSync(join(packageRoot,'package.json'))).version)throw Error('matrix_mcp_package_version_mismatch');
     mcp.child.stdin.write(JSON.stringify({jsonrpc:'2.0',method:'notifications/initialized'})+'\n');
     monitor=startMonitor();
   }

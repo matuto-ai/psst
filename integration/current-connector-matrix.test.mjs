@@ -4,22 +4,22 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { join, resolve } from 'node:path';
 import { pathToFileURL, fileURLToPath } from 'node:url';
-import { mkdirSync, symlinkSync, readFileSync } from 'node:fs';
-import { execFile, spawn } from 'node:child_process';
-import { promisify } from 'node:util';
+import { mkdirSync, symlinkSync, readFileSync, writeFileSync } from 'node:fs';
+import { spawn } from 'node:child_process';
 import { createInterface } from 'node:readline';
 import { randomUUID, createHash } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
 import { backupDatabase } from '../scripts/backup.mjs';
 import { approvalTlsFixture } from '../test/approval-tls-fixture.mjs';
+import { validateCohort, verifyCheckout, packVerifiedConnector } from '../scripts/connector-provenance.mjs';
 
-const execute = promisify(execFile);
 const types = ['pi', 'claude-code', 'antigravity-cli', 'opencode'];
 const sources = JSON.parse(process.env.PSST_CURRENT_MATRIX_SOURCES || 'null');
 if (!sources || types.some(type => typeof sources[type] !== 'string')) {
   throw Error('PSST_CURRENT_MATRIX_SOURCES must identify all four pinned connector checkouts');
 }
-const packagesByType = { pi: 'pi', 'claude-code': 'claude', 'antigravity-cli': 'antigravity', opencode: 'opencode' };
+const cohort = validateCohort(JSON.parse(process.env.PSST_CURRENT_COHORT || 'null'), process.env.PSST_COHORT_MODE || 'current');
+const brokerCheckout = verifyCheckout(fileURLToPath(new URL('../', import.meta.url)), cohort.broker);
 const helpers = { pi: 'vendor/broker/reference/approval.mjs', 'claude-code': 'vendor/approval.mjs',
   'antigravity-cli': 'vendor/psst/approval.mjs', opencode: 'vendor/enrollment/approval.mjs' };
 
@@ -91,15 +91,16 @@ test('current four packages: directed transport, synthetic native boundaries, pe
     if (request.method === 'POST' && request.url === '/v1/enrollment-requests') enrollmentPosts++;
   });
   const packages = {}, approved = {}, installations = {}, hashes = {};
+  const evidence = { schema: 1, cohort, broker: { repository: brokerCheckout.repository, commit: brokerCheckout.commit, tree: brokerCheckout.tree },
+    boundary: 'Packed current source; real TLS/broker/journals; synthetic native/model boundaries', packages: {}, outcome: 'packing' };
+  const saveEvidence = () => { if (process.env.PSST_COHORT_EVIDENCE) writeFileSync(process.env.PSST_COHORT_EVIDENCE, JSON.stringify(evidence, null, 2) + '\n', { mode: 0o600 }); };
+  saveEvidence();
   for (const type of types) {
     const source = resolve(sources[type]), out = join(f.directory, 'packages', type);
-    mkdirSync(out, { recursive: true, mode: 0o700 });
-    const { stdout } = await execute('npm', ['pack', '--json', '--ignore-scripts', '--cache', join(f.directory, 'npm-cache'), '--pack-destination', out], { cwd: source, timeout: 30000 });
-    const packed = JSON.parse(stdout)[0];
-    assert.equal(packed.name, `@matuto-ai/${packagesByType[type]}-psst-connector`);
-    t.diagnostic(`current package ${type}: ${packed.version}, integrity ${packed.integrity}`);
-    await execute('tar', ['-xzf', join(out, packed.filename), '-C', out]);
-    packages[type] = join(out, 'package');
+    const packed = packVerifiedConnector({ source, expected: cohort.connectors[type], type, directory: out });
+    t.diagnostic(`${cohort.mode} package ${type}: ${packed.evidence.version}, commit ${packed.evidence.commit}, integrity ${packed.evidence.integrity}`);
+    packages[type] = packed.root;
+    evidence.packages[type] = packed.evidence; saveEvidence();
     if (['pi', 'opencode'].includes(type)) symlinkSync(join(source, 'node_modules'), join(packages[type], 'node_modules'));
     const helper = pathToFileURL(join(packages[type], helpers[type])).href;
     installations[type] = join(f.directory, 'persistent', type);
@@ -114,6 +115,7 @@ test('current four packages: directed transport, synthetic native boundaries, pe
     assert.equal(approved[type].state, 'approved');
     hashes[type] = createHash('sha256').update(readFileSync(join(approved[type].connectionFile, '..', 'token'))).digest('hex');
   }
+  evidence.outcome = 'running'; saveEvidence();
   assert.equal(enrollmentPosts, 4);
   assert.equal(new Set(Object.values(approved).map(item => item.credentialId)).size, 4);
   const identities = new Set();
@@ -257,5 +259,8 @@ test('current four packages: directed transport, synthetic native boundaries, pe
   assert.equal(identities.size, 16);
   assert.equal(deliveries, 43);
   assert.equal(f.approval.list().length, 4);
+  verifyCheckout(brokerCheckout.source, cohort.broker);
+  for (const type of types) verifyCheckout(sources[type], cohort.connectors[type]);
+  evidence.outcome = 'transport_assertions_passed'; evidence.deliveries = deliveries; saveEvidence();
   t.diagnostic('43 real transport deliveries: 32 directed routes, four same-native-owner pending restarts, four broker-snapshot recoveries, three concurrent routes. Native boundaries/model reads are synthetic; no authenticated CLI/model or deployment acceptance.');
 });

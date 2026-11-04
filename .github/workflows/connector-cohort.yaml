@@ -1,0 +1,83 @@
+name: Current connector cohort
+on:
+  workflow_call:
+permissions:
+  contents: read
+jobs:
+  resolve-cohort:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    outputs:
+      cohort: ${{ steps.resolve.outputs.cohort }}
+    steps:
+      # The GitHub context belongs to the connector caller. Select the broker
+      # explicitly, once, and pass its immutable commit to the execution job.
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          repository: matuto-ai/psst
+          ref: main
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24.19.0'
+      - name: Freeze exact caller candidate with current broker and siblings
+        id: resolve
+        run: node scripts/connector-provenance.mjs resolve-candidate "$RUNNER_TEMP/connector-cohort.json"
+  current-cohort:
+    needs: resolve-cohort
+    runs-on: ubuntu-24.04
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          repository: matuto-ai/psst
+          ref: ${{ fromJSON(needs.resolve-cohort.outputs.cohort).broker.commit }}
+          persist-credentials: false
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          repository: matuto-ai/pi-psst-connector
+          ref: ${{ fromJSON(needs.resolve-cohort.outputs.cohort).connectors['pi'].commit }}
+          path: .current-matrix/pi
+          persist-credentials: false
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          repository: matuto-ai/claude-psst-connector
+          ref: ${{ fromJSON(needs.resolve-cohort.outputs.cohort).connectors['claude-code'].commit }}
+          path: .current-matrix/claude
+          persist-credentials: false
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          repository: matuto-ai/antigravity-psst-connector
+          ref: ${{ fromJSON(needs.resolve-cohort.outputs.cohort).connectors['antigravity-cli'].commit }}
+          path: .current-matrix/antigravity
+          persist-credentials: false
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          repository: matuto-ai/opencode-psst-connector
+          ref: ${{ fromJSON(needs.resolve-cohort.outputs.cohort).connectors['opencode'].commit }}
+          path: .current-matrix/opencode
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24.19.0'
+      - name: Install locked Pi renderer dependency without host or scripts
+        working-directory: .current-matrix/pi
+        run: npm ci --ignore-scripts --legacy-peer-deps --no-audit --no-fund
+      - name: Install locked OpenCode runtime dependency without host or scripts
+        working-directory: .current-matrix/opencode
+        run: npm ci --ignore-scripts --omit=dev --no-audit --no-fund
+      - name: Build verified exact-source packages and run real transport matrix
+        run: node --test integration/current-connector-matrix.test.mjs
+        env:
+          PSST_COHORT_MODE: source-candidate
+          PSST_CURRENT_COHORT: ${{ needs.resolve-cohort.outputs.cohort }}
+          PSST_COHORT_EVIDENCE: ${{ runner.temp }}/connector-cohort-evidence.json
+          PSST_CURRENT_MATRIX_SOURCES: '{"pi":".current-matrix/pi","claude-code":".current-matrix/claude","antigravity-cli":".current-matrix/antigravity","opencode":".current-matrix/opencode"}'
+      - name: Keep candidate and sibling source/package evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: connector-cohort-evidence
+          path: ${{ runner.temp }}/connector-cohort-evidence.json
+          if-no-files-found: warn
+          retention-days: 7

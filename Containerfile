@@ -13,6 +13,7 @@ FROM node:24.19.0-bookworm@sha256:4196d66a565c6f195728d9952f161f4adfe2ad753052a0
 WORKDIR /app
 COPY --from=base /app /app
 COPY test ./test
+COPY .github/workflows/verify.yaml .github/workflows/connector-cohort.yaml ./.github/workflows/
 COPY fixtures ./fixtures
 COPY deploy/config.proxy-container.example.json ./deploy/config.proxy-container.example.json
 COPY openapi.json compose.yaml Containerfile README.md CHANGELOG.md ./

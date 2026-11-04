@@ -9,6 +9,24 @@ concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name != 'release' }}
 jobs:
+  # Freeze all sibling heads once. Every dependent job consumes these immutable
+  # SHAs; package versions alone cannot identify the code being qualified.
+  resolve-current-cohort:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    outputs:
+      cohort: ${{ steps.resolve.outputs.cohort }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24.19.0'
+      - name: Resolve current main commits once for this workflow
+        id: resolve
+        run: node scripts/connector-provenance.mjs resolve "$RUNNER_TEMP/current-cohort.json"
   verify:
     needs: [local-tests, container, rootless-podman, isolated-topology, browser-compose, browser-podman, cooperative-transport, current-transport, candidate-transport, native-presence]
     if: ${{ always() }}
@@ -52,6 +70,7 @@ jobs:
           ENGINE: ${{ matrix.engine }}
         run: for attempt in 1 2; do node scripts/container-topology.mjs "$ENGINE" localhost/psst-topology:ci; done
   native-presence:
+    needs: resolve-current-cohort
     runs-on: ubuntu-24.04
     timeout-minutes: 3
     steps:
@@ -62,7 +81,7 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           repository: matuto-ai/pi-psst-connector
-          ref: b87e29851a21be4342f8f4585fc16b1003f6c763
+          ref: ${{ fromJSON(needs.resolve-current-cohort.outputs.cohort).connectors['pi'].commit }}
           path: .native-presence/pi
           persist-credentials: false
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
@@ -82,6 +101,7 @@ jobs:
         run: node --test integration/native-pi-presence.test.mjs
         env:
           PI_TEST_INSTALL: ${{ runner.temp }}/pi-presence-host
+          PSST_CURRENT_COHORT: ${{ needs.resolve-current-cohort.outputs.cohort }}
           PSST_NATIVE_PI_SOURCE: .native-presence/pi
           PSST_NATIVE_PRESENCE_EVIDENCE: ${{ runner.temp }}/native-presence.json
       - name: Keep sanitized lifecycle evidence, including partial progress
@@ -326,6 +346,7 @@ jobs:
       # acceptance. Official host/Compose/Podman gates remain in each repository;
       # OpenCode automatic admission and Antigravity sign-in remain separate gates.
   current-transport:
+    needs: resolve-current-cohort
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
@@ -336,25 +357,25 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           repository: matuto-ai/pi-psst-connector
-          ref: b87e29851a21be4342f8f4585fc16b1003f6c763
+          ref: ${{ fromJSON(needs.resolve-current-cohort.outputs.cohort).connectors['pi'].commit }}
           path: .current-matrix/pi
           persist-credentials: false
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           repository: matuto-ai/claude-psst-connector
-          ref: c356ba09b8e11d516dbdf7a8e4f04ea6ed5841ae
+          ref: ${{ fromJSON(needs.resolve-current-cohort.outputs.cohort).connectors['claude-code'].commit }}
           path: .current-matrix/claude
           persist-credentials: false
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           repository: matuto-ai/antigravity-psst-connector
-          ref: 9e6eb0315b28b27c73406fbbc1bfe5dac477fe9c
+          ref: ${{ fromJSON(needs.resolve-current-cohort.outputs.cohort).connectors['antigravity-cli'].commit }}
           path: .current-matrix/antigravity
           persist-credentials: false
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           repository: matuto-ai/opencode-psst-connector
-          ref: 3eb99d967c34f94b4954bb5efe13f2a07e21986b
+          ref: ${{ fromJSON(needs.resolve-current-cohort.outputs.cohort).connectors['opencode'].commit }}
           path: .current-matrix/opencode
           persist-credentials: false
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
@@ -370,11 +391,22 @@ jobs:
         run: for source in integration/current-*.mjs; do node --check "$source"; done
       - name: Verify current packed connectors with explicit synthetic native boundaries
         env:
+          PSST_CURRENT_COHORT: ${{ needs.resolve-current-cohort.outputs.cohort }}
+          PSST_COHORT_EVIDENCE: ${{ runner.temp }}/current-cohort-evidence.json
           PSST_CURRENT_MATRIX_SOURCES: '{"pi":".current-matrix/pi","claude-code":".current-matrix/claude","antigravity-cli":".current-matrix/antigravity","opencode":".current-matrix/opencode"}'
         run: node --test integration/current-connector-matrix.test.mjs
       # Real packages, broker/TLS, inboxes, monitor/waiter and operation guards.
       # Synthetic host input/context, native receipts and model read/ACK actions.
       # The legacy cooperative cohort remains an independent compatibility lane.
+
+      - name: Keep exact source and package provenance, including partial progress
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: current-cohort-evidence
+          path: ${{ runner.temp }}/current-cohort-evidence.json
+          if-no-files-found: warn
+          retention-days: 7
 
   # Explicit PR dependencies: Pi28, Claude28, Antigravity24, OpenCode20.
   # This transport-only lane does not replace any native approval or source-PR gate.
@@ -423,8 +455,19 @@ jobs:
         run: for source in integration/current-*.mjs; do node --check "$source"; done
       - name: Verify explicitly unmerged candidate packages with synthetic native boundaries
         env:
+          PSST_COHORT_MODE: pinned-candidate
+          PSST_CURRENT_COHORT: '{"schema":1,"mode":"pinned-candidate","broker":{"repository":"matuto-ai/psst","commit":"${{ github.sha }}"},"connectors":{"pi":{"repository":"matuto-ai/pi-psst-connector","ref":"pinned-candidate","commit":"95170f56e025b17bff49b6d4d3bbb9897b9256b3"},"claude-code":{"repository":"matuto-ai/claude-psst-connector","ref":"pinned-candidate","commit":"6a8d2f215913f8250a114a9802411eea2595a0e0"},"antigravity-cli":{"repository":"matuto-ai/antigravity-psst-connector","ref":"pinned-candidate","commit":"3bf54ee24703bb38ac1764184e17d50615c67c23"},"opencode":{"repository":"matuto-ai/opencode-psst-connector","ref":"pinned-candidate","commit":"c14bc10db807e3ba0b3d6594d5b1c3b8c118f31f"}}}'
+          PSST_COHORT_EVIDENCE: ${{ runner.temp }}/pinned-candidate-evidence.json
           PSST_CURRENT_MATRIX_SOURCES: '{"pi":".candidate-matrix/pi","claude-code":".candidate-matrix/claude","antigravity-cli":".candidate-matrix/antigravity","opencode":".candidate-matrix/opencode"}'
         run: node --test integration/current-connector-matrix.test.mjs
       # Real packages, broker/TLS, inboxes, monitor/waiter and operation guards.
       # Synthetic host input/context, native receipts and model read/ACK actions.
       # The legacy cooperative cohort remains an independent compatibility lane.
+      - name: Keep pinned-candidate package provenance separately
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: pinned-candidate-evidence
+          path: ${{ runner.temp }}/pinned-candidate-evidence.json
+          if-no-files-found: warn
+          retention-days: 7

@@ -1,5 +1,8 @@
 .git
-.github
+.github/**
+!.github/workflows
+!.github/workflows/verify.yaml
+!.github/workflows/connector-cohort.yaml
 node_modules
 coverage
 *.db
