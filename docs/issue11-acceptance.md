@@ -78,40 +78,48 @@ All 12 cross-family and four distinct-session same-family routes assert exact
 sender, recipient, body and untrusted-agent provenance. Delivered items remain
 pending with no fabricated native receipt. The test removes/recreates recipients,
 queues four offline messages, kills/restarts the broker, verifies persistent
-identities/journals/dedupe, and runs three concurrent routes. Docker kills and
-restarts the actual broker container. Podman kills the actual production broker
-child and verifies a new PID from a test-only supervisor that retains the container
-network namespace. Recipient containers are independently recreated on both engines.
+identities/journals/dedupe, and runs three concurrent routes. Both engines kill
+and restart the real production broker container. Podman reserves the same private
+IP in its new empty subnet. Both engines use a unique, locally administered broker
+MAC generated once per fixture, plus container-local hostname mappings. The test
+requires unchanged inspected IP/MAC, distinct container link addresses and fresh
+verified TLS from surviving clients **before** recipient recreation. Matching
+peer neighbor entries are checked before and after recovery. Rootless lifecycle
+operations are serial; actual message exchange remains concurrent. Two independent
+full topology runs per engine are required. No supervisor or process-only fallback
+substitutes for full container restart.
 
-**Observed hosted Podman limitation:** surviving peers intermittently lost DNS
-or fresh TLS connectivity under concurrent container provisioning/removal, including
-both container restart and process-only restart scenarios. Recreated peers could
-connect. Correct static DNS/IP did not resolve every case, so namespace replacement
-alone is not an established root cause. The fixture serializes rootless container
-lifecycle operations, supplies container-local host mappings for the unchanged
-private broker IP, and verifies fresh name resolution/TLS before and after
-recovery and recipient recreation; actual message exchange remains concurrent. No host routing,
-DNS or security setting is changed. Two independent runs per engine are required.
-The Podman check proves process/storage recovery only, not full container-runtime
-network recovery. Model metadata
-changes preserve identity in this reference topology. The separate actual Pi
-probe verifies native model selection with identity continuity, source labels
-in provider input, and an idle heartbeat renewal with zero provider calls. Containers are
-removed before their bind-mounted data is discarded.
+### Legacy rootless bridge endpoint regression
+
+The [unpinned-MAC diagnostic](https://github.com/matuto-ai/psst/actions/runs/41749509433)
+observed Podman4.9.3 with Netavark1.4.0 and aardvark-dns1.4.0. Full restart preserved
+`10.89.0.2` but changed the broker MAC from `c2:ac:39:37:24:c3` to
+`2e:1c:fc:d9:8c:6f`. At the failed fresh TLS request, the surviving peer's matching
+ARP entry still contained the old MAC. This identifies stale neighbor state rather
+than broker authorization, SQLite recovery or DNS resolution as the observed
+failure mechanism. Exact failing source remains at
+`64c9bca974c16a4469bbfa83d0d4724a94f533fa`; the earlier bounded full-runtime failure
+also remains at [run41746670465](https://github.com/matuto-ai/psst/actions/runs/41746670465).
+
+The [supported explicit MAC option](https://docs.podman.io/en/v4.9.3/markdown/podman-run.1.html#mac-address-address)
+is a **topology-specific persistent-endpoint mitigation**, not a claim that generic
+dynamic address/MAC replacement recovers on that legacy stack. Direct private-
+bridge clients need a stable IP/MAC pair, unique in that bridge, retained in their
+container configuration. Container-local mappings still verify the real TLS
+hostname/CA. Do not copy a fixture MAC to multiple services or change a host NIC's
+MAC. No ARP flush, sysctl, firewall, DNS-service, security or capability change is
+used. Ordinary LAN clients of a published host endpoint use a different path; the
+inactive Quadlet's operator-selected LAN binding is not changed by this fixture.
+
+Model metadata changes preserve identity in this reference topology. The separate
+actual Pi probe verifies native model selection with identity continuity, source
+labels in provider input, and an idle heartbeat renewal with zero provider calls.
+Containers are removed before their bind-mounted data is discarded.
 
 The two isolated-topology jobs are required by the fail-closed aggregate. Summaries
 explicitly report nativeHostCertification=false and twoPhysicalHosts=false. The
 local probe test validates its control protocol and TLS, not container isolation.
 Actual container evidence comes from the engine runs.
-
-A bounded [full rootless container-restart probe](https://github.com/matuto-ai/psst/actions/runs/41746670465)
-used serial lifecycle operations, an explicitly reserved unchanged IP and the
-fresh surviving-peer check **before** recipient recreation. Name resolution still
-returned the correct address, but the new TLS request timed out. This is retained
-failed evidence, not a passing native/package requirement. The passing required
-Podman lane remains process/storage recovery; full runtime/network recovery needs
-an independently qualified engine/host setup. The exact failing source is retained
-at commit `8a7bbc994b1a39077cc6ab1cc144bd6cbeb1b9c2`.
 
 ## Explicit unmerged candidate cohort
 

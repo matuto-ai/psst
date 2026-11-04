@@ -22,6 +22,8 @@ const networkRuntime = engineInfo ? { backend: engineInfo.host?.networkBackend,
 const directory = mkdtempSync(join(process.env.RUNNER_TEMP ?? tmpdir(), 'psst-topology-'));
 const prefix = `psst-topology-${randomBytes(6).toString('hex')}`, network = `${prefix}-net`, broker = `${prefix}-broker`;
 const types = ['pi', 'antigravity-cli', 'claude-code', 'opencode'];
+// A local unicast MAC is unique to this owned bridge and persists through restart.
+const brokerMac = [0x02, ...randomBytes(5)].map(byte => byte.toString(16).padStart(2, '0')).join(':');
 const brokerData = join(directory, 'broker-data'), brokerPrivate = join(directory, 'broker-private');
 for (const path of [brokerData, brokerPrivate]) mkdirSync(path, { mode: 0o700 });
 const peers = types.flatMap(type => [0, 1].map(index => ({ type, index, name: `${prefix}-${type}-${index}`,
@@ -39,10 +41,11 @@ async function healthy(peers, phase) {
     const probe = await peer.call('probe');
     assert.ok(probe.dns.address, `${phase} ${peer.type} fresh name resolution: ${JSON.stringify(probe)}`);
     assert.equal(probe.https.status, 200, `${phase} ${peer.type} fresh verified TLS: ${JSON.stringify(probe)}`);
+    assert.equal(probe.neighbor?.mac, brokerMac, `${phase} ${peer.type} neighbor matches persistent broker endpoint`);
   }
 }
 const children = new Set(); let networkCreated = false, brokerAddress;
-const startBroker = () => run(['run', '--detach', '--name', broker, '--network-alias', 'broker', ...hardening,
+const startBroker = () => run(['run', '--detach', '--name', broker, '--network-alias', 'broker', '--mac-address', brokerMac, ...hardening,
   ...(brokerAddress ? ['--ip', brokerAddress] : []),
   '--volume', `${brokerData}:/data:rw`, '--volume', `${brokerPrivate}:/run/broker:ro`, image]);
 async function startPeer(peer) {
@@ -115,6 +118,7 @@ try {
   const requestedAddress = brokerAddress;
   const createdEndpoint = JSON.parse(await run(['inspect', broker]))[0].NetworkSettings.Networks[network];
   brokerAddress = createdEndpoint.IPAddress;
+  assert.equal(createdEndpoint.MacAddress.toLowerCase(), brokerMac, 'broker uses its explicit persistent MAC');
   console.log(JSON.stringify({ phase: 'broker-created', engine, engineVersion, networkRuntime, address: brokerAddress, mac: createdEndpoint.MacAddress }));
   assert.match(brokerAddress, /^\d+\.\d+\.\d+\.\d+$/);
   if (requestedAddress) assert.equal(brokerAddress, requestedAddress);
@@ -122,6 +126,7 @@ try {
   await healthy(peers, 'initial topology');
   assert.equal(new Set(peers.map(peer => peer.identity.client_id)).size, 8);
   const inspections = JSON.parse(await run(['inspect', broker, ...peers.map(peer => peer.name)]));
+  assert.equal(new Set(inspections.map(item => item.NetworkSettings.Networks[network].MacAddress.toLowerCase())).size, 9, 'all private link addresses are distinct');
   for (const item of inspections) {
     assert.ok(!item.HostConfig?.PidMode || item.HostConfig.PidMode === 'private');
     assert.equal(Object.keys(item.HostConfig?.PortBindings ?? {}).length, 0);
@@ -168,6 +173,7 @@ try {
   await run(['start', broker]);
   const restartedEndpoint = JSON.parse(await run(['inspect', broker]))[0].NetworkSettings.Networks[network];
   const afterAddress = restartedEndpoint.IPAddress;
+  assert.equal(restartedEndpoint.MacAddress.toLowerCase(), brokerMac, 'broker MAC survives full container restart');
   console.log(JSON.stringify({ phase: 'broker-container-restarted', engine, address: afterAddress, mac: restartedEndpoint.MacAddress }));
   assert.equal(afterAddress, brokerAddress, 'explicit service endpoint remains unchanged');
   for (const sender of peers.filter(peer => peer.index === 0)) await sender.call('reconnect');
@@ -194,7 +200,7 @@ try {
   assert.equal(await run(['inspect', '--format', '{{.State.ExitCode}}', broker]), '0');
   console.log(JSON.stringify({ result: 'passed', engine, engineVersion, topology: 'eight separate reference adapter containers and one TLS broker',
     directedRoutes: 16, offlineRoutes: 4, concurrentRoutes: 3, brokerCrashRecovery: true, inboxRecreation: true,
-    modelMetadataSwitch: true, publishedPorts: 0, explicitPrivateHostMapping: true, brokerContainerRestart: true, brokerProcessRestart: true, serializedRootlessLifecycle: engine === 'podman', nativeHostCertification: false, twoPhysicalHosts: false }));
+    modelMetadataSwitch: true, publishedPorts: 0, explicitPrivateHostMapping: true, stableBrokerMac: true, brokerContainerRestart: true, brokerProcessRestart: true, serializedRootlessLifecycle: engine === 'podman', nativeHostCertification: false, twoPhysicalHosts: false }));
 } finally {
   const removed = await lifecycle([broker, ...peers.map(peer => peer.name)], async name => {
     try { await run(['rm', '--force', name]); return { status: 'fulfilled' }; }

@@ -100,6 +100,16 @@ podman run --name ai-agent-msg-broker --rm \
 
 The direct-TLS config must be named `config.json` in the mounted private directory. `:Z` labels only those dedicated directories for Fedora SELinux; never apply it to an entire home directory. The process runs as the operator-mapped nonroot UID, all capabilities dropped, read-only root filesystem, private state writable. This is a template, not a command this implementation executes. Follow the current [Podman run reference](https://docs.podman.io/en/latest/markdown/podman-run.1.html) for the selected installed version.
 
+For direct container-to-container clients on a legacy rootless bridge, retain a
+unique, locally administered broker MAC together with its fixed private IP in the
+container configuration. Podman4.9.3/Netavark1.4.0 can recreate a new random MAC
+while live clients retain the old ARP entry. Use the supported `--mac-address`
+option for that private broker endpoint; never change a host NIC MAC or flush
+neighbors to mask a failed test. The [recovery acceptance record](issue11-acceptance.md#legacy-rootless-bridge-endpoint-regression)
+retains the unmodified failure and the exact topology-specific mitigation. A LAN
+client of the published host endpoint follows a different path; this is not a
+new requirement to change the host's network configuration.
+
 `deploy/broker.container.example` is a deliberately inactive [Quadlet template](https://docs.podman.io/en/latest/markdown/podman-systemd.unit.5.html). Replace UID/GID, paths and the LAN publish placeholder; review the image and TLS/config mounts before placing a private copy in the rootless user Quadlet directory. Installing/enabling it, selecting autostart/linger, adjusting firewall rules and deploying are separate operator actions. Graceful SIGTERM stops new accepts/claims, terminates long polls, finishes bounded transactions and closes the store.
 
 ## Storage, retention, and recovery
