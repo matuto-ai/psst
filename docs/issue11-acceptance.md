@@ -78,10 +78,10 @@ All 12 cross-family and four distinct-session same-family routes assert exact
 sender, recipient, body and untrusted-agent provenance. Delivered items remain
 pending with no fabricated native receipt. The test removes/recreates recipients,
 queues four offline messages, kills/restarts the broker, verifies persistent
-identities/journals/dedupe, and runs three concurrent routes. Docker kills and
-restarts the actual broker container. Podman kills the actual production broker
-child and verifies a new PID from a test-only supervisor that retains the container
-network namespace. Recipient containers are independently recreated on both engines.
+identities/journals/dedupe, and runs three concurrent routes. Both engines kill and
+restart the actual production broker container. Podman reserves an explicit private
+IP in its freshly created, otherwise empty internal subnet. Docker retains its
+initial allocation. The restarted endpoint must match the original address. Recipient containers are independently recreated on both engines.
 
 **Observed hosted Podman limitation:** surviving peers intermittently lost DNS
 or fresh TLS connectivity under concurrent container provisioning/removal, including
@@ -92,8 +92,9 @@ lifecycle operations, supplies container-local host mappings for the unchanged
 private broker IP, and verifies fresh name resolution/TLS before and after
 recovery and recipient recreation; actual message exchange remains concurrent. No host routing,
 DNS or security setting is changed. Two independent runs per engine are required.
-The Podman check proves process/storage recovery only, not full container-runtime
-network recovery. Model metadata
+This explicitly configured topology checks full container-runtime restart; it
+does not qualify arbitrary dynamic DNS/IP changes or concurrent rootless network
+provisioning. Earlier process-only evidence is not used as a substitute. Model metadata
 changes preserve identity in this reference topology. The separate actual Pi
 probe verifies native model selection with identity continuity, source labels
 in provider input, and an idle heartbeat renewal with zero provider calls. Containers are

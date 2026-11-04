@@ -6,6 +6,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, copyFileSync, rmSync } from 'nod
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
+import { isIPv4 } from 'node:net';
 import { randomBytes, randomUUID, createHash } from 'node:crypto';
 
 const execute = promisify(execFile), engine = process.argv[2], image = process.argv[3];
@@ -38,8 +39,8 @@ async function healthy(peers, phase) {
 }
 const children = new Set(); let networkCreated = false, brokerAddress;
 const startBroker = () => run(['run', '--detach', '--name', broker, '--network-alias', 'broker', ...hardening,
-  '--volume', `${brokerData}:/data:rw`, '--volume', `${brokerPrivate}:/run/broker:ro`, image,
-  ...(engine === 'podman' ? ['node', 'scripts/topology-broker-supervisor.mjs'] : [])]);
+  ...(brokerAddress ? ['--ip', brokerAddress] : []),
+  '--volume', `${brokerData}:/data:rw`, '--volume', `${brokerPrivate}:/run/broker:ro`, image]);
 async function startPeer(peer) {
   const child = spawn(engine, ['run', '--interactive', '--name', peer.name, ...hardening,
     '--add-host', `broker:${brokerAddress}`,
@@ -94,9 +95,23 @@ try {
   writeFileSync(join(brokerPrivate, 'config.json'), JSON.stringify({ database: '/data/broker.sqlite', credential_file: '/run/broker/credentials.json',
     host: '0.0.0.0', port: 8787, tls: { certFile: '/run/broker/cert.pem', keyFile: '/run/broker/key.pem' } }), { mode: 0o600 });
   await run(['network', 'create', '--internal', network]); networkCreated = true;
+  if (engine === 'podman') {
+    const createdNetwork = JSON.parse(await run(['network', 'inspect', network]))[0];
+    const subnet = createdNetwork.subnets?.find(entry => entry.subnet.includes('.'));
+    assert.match(subnet?.subnet ?? '', /^(\d+\.){3}\d+\/\d+$/);
+    const [base, prefixLength] = subnet.subnet.split('/'), prefix = Number(prefixLength);
+    assert.ok(isIPv4(base) && Number.isInteger(prefix) && prefix >= 1 && prefix <= 30);
+    const networkAddress = base.split('.').reduce((value, octet) => value * 256 + Number(octet), 0);
+    const size = 2 ** (32 - prefix); assert.equal(networkAddress % size, 0);
+    const address = networkAddress + 2; assert.ok(address < networkAddress + size - 1);
+    brokerAddress = [24, 16, 8, 0].map(shift => (address >>> shift) & 255).join('.');
+    assert.notEqual(brokerAddress, subnet.gateway);
+  }
   await startBroker();
+  const requestedAddress = brokerAddress;
   brokerAddress = JSON.parse(await run(['inspect', broker]))[0].NetworkSettings.Networks[network].IPAddress;
   assert.match(brokerAddress, /^\d+\.\d+\.\d+\.\d+$/);
+  if (requestedAddress) assert.equal(brokerAddress, requestedAddress);
   await lifecycle(peers, startPeer);
   await healthy(peers, 'initial topology');
   assert.equal(new Set(peers.map(peer => peer.identity.client_id)).size, 8);
@@ -143,25 +158,8 @@ try {
     assert.equal(item.receipt.recipient_connected_at_acceptance, false);
   }
   await healthy(peers.filter(peer => peer.index === 0), 'before broker restart');
-  if (engine === 'docker') {
-    await run(['kill', '--signal', 'KILL', broker]); await run(['wait', broker]);
-    await run(['start', broker]);
-  } else {
-    // The hosted Podman runtime loses surviving-peer connectivity when its
-    // network namespace is replaced. Crash the actual production broker child
-    // while retaining the namespace; do not call this container-runtime recovery.
-    const state = ['exec', broker, 'node', '-e', "process.stdout.write(require('node:fs').readFileSync('/data/topology-process.json','utf8'))"];
-    const before = JSON.parse(await run(state)); assert.equal(before.generation, 1);
-    await run(['exec', broker, 'node', '-e', `process.kill(${before.pid}, 'SIGKILL')`]);
-    const deadline = Date.now() + 5000;
-    let after;
-    while (Date.now() < deadline) {
-      after = JSON.parse(await run(state)); if (after.generation === 2) break;
-      await new Promise(resolve => setTimeout(resolve, 25));
-    }
-    assert.equal(after.generation, 2); assert.equal(after.previousExit, 'SIGKILL');
-    assert.notEqual(after.pid, before.pid);
-  }
+  await run(['kill', '--signal', 'KILL', broker]); await run(['wait', broker]);
+  await run(['start', broker]);
   const afterAddress = JSON.parse(await run(['inspect', broker]))[0].NetworkSettings.Networks[network].IPAddress;
   assert.equal(afterAddress, brokerAddress, 'explicit service endpoint remains unchanged');
   for (const sender of peers.filter(peer => peer.index === 0)) await sender.call('reconnect');
@@ -188,7 +186,7 @@ try {
   assert.equal(await run(['inspect', '--format', '{{.State.ExitCode}}', broker]), '0');
   console.log(JSON.stringify({ result: 'passed', engine, topology: 'eight separate reference adapter containers and one TLS broker',
     directedRoutes: 16, offlineRoutes: 4, concurrentRoutes: 3, brokerCrashRecovery: true, inboxRecreation: true,
-    modelMetadataSwitch: true, publishedPorts: 0, explicitPrivateHostMapping: true, brokerContainerRestart: engine === 'docker', brokerProcessRestart: true, rootlessNamespaceRestartCertified: false, nativeHostCertification: false, twoPhysicalHosts: false }));
+    modelMetadataSwitch: true, publishedPorts: 0, explicitPrivateHostMapping: true, brokerContainerRestart: true, brokerProcessRestart: true, serializedRootlessLifecycle: engine === 'podman', nativeHostCertification: false, twoPhysicalHosts: false }));
 } finally {
   const removed = await lifecycle([broker, ...peers.map(peer => peer.name)], async name => {
     try { await run(['rm', '--force', name]); return { status: 'fulfilled' }; }
