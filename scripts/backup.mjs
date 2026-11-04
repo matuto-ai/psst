@@ -3,13 +3,26 @@ import { lstatSync, realpathSync, openSync, closeSync, chmodSync, unlinkSync } f
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+const SIDECARS = ['-wal', '-shm', '-journal'];
+
 /** SQLite-safe online snapshot. Never overwrites a destination or starts a broker. */
 export async function backupDatabase(source, destination) {
   const from = resolve(source), to = resolve(destination);
   const sourceStat = lstatSync(from), targetParent = dirname(to), parentStat = lstatSync(targetParent);
   if (!sourceStat.isFile() || sourceStat.isSymbolicLink() || realpathSync(from) !== from) throw new Error('Source must be a local regular database file without symlinks.');
   if (!parentStat.isDirectory() || realpathSync(targetParent) !== targetParent || (parentStat.mode & 0o077) !== 0 || (process.getuid && parentStat.uid !== process.getuid())) throw new Error('Backup directory must be private and owned by the current operator.');
-  if (from === to) throw new Error('Backup destination must differ from the source.');
+  // SQLite may create, truncate or remove companion files while opening a path.
+  // Check both directions before opening either database: the source itself
+  // could otherwise be mistaken for the destination's WAL or rollback journal.
+  const sourcePaths = new Set([from, ...SIDECARS.map(suffix => from + suffix)]);
+  if ([to, ...SIDECARS.map(suffix => to + suffix)].some(path => sourcePaths.has(path))) {
+    throw new Error('Backup paths must not overlap a database or its SQLite sidecars.');
+  }
+  for (const suffix of SIDECARS) {
+    try { lstatSync(to + suffix); }
+    catch (error) { if (error.code === 'ENOENT') continue; throw error; }
+    throw new Error('Backup destination has SQLite sidecars. Choose a new snapshot path.');
+  }
   const fd = openSync(to, 'wx', 0o600);
   closeSync(fd);
   let db, snapshot;

@@ -1,6 +1,6 @@
 # Compatibility evidence and release gates
 
-**Scope note (2026-11-04):** this feasibility/reference material retains historical host observations. Its old probes are archived links, not current CI requirements. The automated suite is now [focused unit verification](verification.md); live-host verification is purpose-specific when requested.
+**Scope note (2026-11-04):** this feasibility/reference material retains historical host observations. Its old probes are archived links, not current CI requirements. The automated suite is now [focused unit verification](verification.md). The owner removed real-environment and integrated tests from issue #11 acceptance; integrated testing will happen later on the owner's machine. Unverified native/environment observations below are not current code-acceptance blockers and are not represented as passed.
 
 ## What this record establishes
 
@@ -80,7 +80,8 @@ official CLI, authenticated model, native package-manager install or any cell be
 
 ## Directed real-harness matrix
 
-All entries remain **not certified** for the complete issue #11 acceptance set.
+All entries remain **not certified** for the complete native matrix, which is
+separate from the owner's revised issue #11 functional/unit acceptance.
 Diagonal cells require distinct same-family sessions. Neither reference routes,
 packaged cooperative/synthetic-native routes nor isolated one-host probes fill these cells.
 
@@ -114,13 +115,15 @@ than automatically replaying an ambiguous native submission.
   data and local providers where needed. They do not certify the user's installed
   CLIs, login, real model response or production setup.
 
-Keep [#11](https://github.com/matuto-ai/psst/issues/11) open for the integrated
-native and external environment gates. The original lifecycle/offline-notice
+The current [#11 acceptance](issue11-acceptance.md#current-acceptance) defers these
+integrated native and external environment checks. The original lifecycle/offline-notice
 acceptance in [#29](https://github.com/matuto-ai/psst/issues/29) was completed by
 [#46](https://github.com/matuto-ai/psst/pull/46); do not reopen it by adding broader #11 requirements. The connector trackers
 remain [Pi #12](https://github.com/matuto-ai/pi-psst-connector/issues/12),
 [Antigravity #8](https://github.com/matuto-ai/antigravity-psst-connector/issues/8),
 [Claude #11](https://github.com/matuto-ai/claude-psst-connector/issues/11) and
 [OpenCode #8](https://github.com/matuto-ai/opencode-psst-connector/issues/8).
-Source merges, green fixture CI and published artifacts are distinct from those
-remaining acceptance gates.
+Source merges, green unit CI and published artifacts remain distinct from actual
+integrated or native certification. Each issue's current acceptance governs its
+code delivery; historical verification requirements do not silently reinstate a
+gate the owner removed.

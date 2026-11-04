@@ -1,12 +1,40 @@
 # Packaging, recovery and compatibility acceptance
 
-**Historical record:** this describes the exact pre-cleanup commits and runs below. The integration/native/container harnesses and mandatory gates were removed in issue #51. See [current unit verification](verification.md). Past evidence is not a claim about the current suite.
+## Current acceptance
+
+On 2026-11-04 the owner explicitly removed integrated and real-environment tests
+from [issue #11](https://github.com/matuto-ai/psst/issues/11) acceptance after the
+unit-only cleanup. Integrated testing will happen later on the owner's machine.
+Functional requirements and focused unit verification remain. This changes the
+issue's delivery gate, not the meaning of native certification or past evidence.
+
+| Current requirement | Implementation and focused evidence |
+| --- | --- |
+| Nonroot/rootless packaging with explicit bindings, persistent local data, read-only secrets and graceful shutdown | `Containerfile`, `compose.yaml`, inactive `deploy/broker.container.example`, direct-TLS/proxy examples and [operations](operations.md). No deployment is performed. |
+| Safe enrollment, rotation, revocation, limits, readiness and redacted diagnostics | Existing operator guides and focused auth, enrollment, approval, server-option, protocol and store units. TLS verification and explicit network boundaries are unchanged. |
+| Backup/restore and migration preserve durable state | `test/backup.test.mjs`, `test/store.test.mjs`, `test/retention-migration-backup.test.mjs` and `test/pairing.test.mjs` cover WAL snapshots, pending mail, epochs, dedupe, receipts and migration snapshots using local SQLite fixtures. |
+| Snapshot creation preserves the source and existing files | CLI and store backup paths share no-overwrite guards. Units reject both-direction SQLite companion aliases, existing sidecars, broken symlinks and directories in DELETE/WAL modes without changing source bytes. |
+| Local inbox safety, uncertainty, non-interruption and source labels | `test/reference.test.mjs` covers durable pending state, modeled unsafe input boundaries, transport-only heartbeat, escaped provenance and paused ambiguous injection after journal reopen. Injected native APIs are not actual harness certification. |
+| Truthful operational and compatibility claims | [Operations](operations.md) defines delivered as durable destination inbox acceptance, not reading, answering, task completion or guaranteed native injection. The [compatibility record](feasibility.md) retains partial historical evidence. |
+| Exact candidate validation | Focused unit suite, JavaScript/operator-shell syntax, independent review and required unit CI. The PR records exact commit and CI results. |
+
+Actual Fedora SELinux/user-systemd/Quadlet, separate-container/two-host LAN, and
+the complete directed native safety/model-switch/restart/crash-window matrix are
+**deferred validation, not current acceptance blockers**. Unit success does not
+claim these checks passed. Release and user-host deployment need separate
+authorization. No removed integration harness or mandatory CI lane is restored.
+
+## Historical evidence
+
+The sections below describe exact pre-cleanup commits and runs. Their integration,
+native and container harnesses were removed in issue #51. See [current unit
+verification](verification.md). Past evidence is not a claim about the current suite.
 
 This ledger maps the original [issue #11](https://github.com/matuto-ai/psst/issues/11)
 requirements to the integrated implementation. It reuses #45's current packed
 cohort and #46's native Pi lifecycle coverage. It does not release or deploy.
 
-## Original acceptance
+## Original acceptance before the scope change
 
 | Original requirement | Implementation and retained check | Remaining dependency |
 | --- | --- | --- |
@@ -16,7 +44,7 @@ cohort and #46's native Pi lifecycle coverage. It does not release or deploy.
 | Separate containers with no shared PID/filesystem dependency or inbound callback | Eight distinct reference adapter containers plus TLS broker, private internal network, separate journals/credentials, no published ports | Two distinct physical LAN hosts |
 | Directed routes, concurrent exchange, offline recipient, model switch and restart | All 16 container reference routes, four offline routes, three concurrent routes, model metadata switch, broker SIGKILL and adapter recreation; 43 current-package deliveries | Full 16-route pinned native-host safety matrix and actual host model switching |
 | Non-interruption, human prompts, source labels in actual model input, zero-token heartbeat and crash windows | Official Pi lifecycle and connector-specific official-host evidence; generic safety tests remain required | Integrated native evidence cannot be inferred from reference or synthetic-host tests |
-| Truthful partial broker release before the four-harness milestone | Native matrix cells remain uncertified until complete evidence exists | Keep #11 open for original native/external gates |
+| Truthful partial broker release before the four-harness milestone | Native matrix cells remain uncertified until complete evidence exists | Originally an issue gate; now deferred without certification |
 | Delivered means durable destination inbox acceptance | Operations/delivery contract and explicit pending/no-native-receipt assertions | No reading, answering or completion claim |
 
 Paid or vendor-authenticated model accounts are **not an added universal gate**.
@@ -172,6 +200,7 @@ hosted CI runs those checks. Remaining original environment-dependent checks:
    final-hop recovery. Reuse individual official-host results, but do not infer
    full directed native coverage from labels or synthetic receipts.
 
-Do not close #11 or certify the four-harness milestone while its original gates
-remain unverified. The package, recovery and same-host topology candidate remains
-independently reviewable; merging it is not deployment.
+These unverified checks originally blocked issue #11, but the owner's scope
+change above removes them from current code acceptance. They still prevent a
+claim of full native/environment certification. Merging implementation is not
+release or deployment.

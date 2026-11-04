@@ -1,4 +1,4 @@
-import { DatabaseSync, backup } from 'node:sqlite';
+import { DatabaseSync } from 'node:sqlite';
 import { PresenceService, presenceSnapshot } from './presence.mjs';
 import { randomUUID } from 'node:crypto';
 import { mkdirSync, mkdtempSync, writeFileSync, openSync, closeSync, fsyncSync, chmodSync, statfsSync, statSync, realpathSync, lstatSync } from 'node:fs';
@@ -194,7 +194,10 @@ export class BrokerStore {
   }
   safe() { try { return !this.closed && !this.poisoned && this.diskCheck(); } catch { return false; } }
   close() { if (this.closed) return; this.closed = true; this.db.close(); this.owner.close(); }
-  async backup(destination) { await backup(this.db, destination); chmodSync(destination, 0o600); }
+  async backup(destination) {
+    if (this.closed) throw new Error('Broker store is closed.');
+    await backupDatabase(this.path, destination);
+  }
   policy(version=2) { const l = this.limits; const extension = { registration_versions: this.db.prepare('SELECT enforced FROM registration_control WHERE id=1').get().enforced ? [2] : [1,2], session_retention_seconds: l.session_retention_seconds }; return { ...(version === 2 ? extension : {}), heartbeat_interval_seconds: l.heartbeat_seconds, lease_seconds: l.lease_seconds, claim_seconds: l.claim_seconds, retention_seconds: l.retention_seconds, registration_retry_seconds: l.registration_retention_seconds, send_retry_seconds: l.retry_window_seconds, offline_notice_seconds:l.offline_notice_seconds, resumable_disconnect:true, presence_events:true }; }
   own(auth, id) {
     const s = this.db.prepare('SELECT * FROM sessions WHERE id=?').get(id);
