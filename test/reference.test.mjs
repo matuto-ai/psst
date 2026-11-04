@@ -489,3 +489,171 @@ test('send metadata refresh also honors the private host shutdown signal before 
  const result=await tools.broker_send({recipient_id:randomUUID(),text:'opaque'},{operationId:'metadata:call',signal});
  assert.equal(seen,signal);assert.equal(result.error.code,'request_aborted');assert.equal(f.inbox.unresolvedSends().length,0);
 });
+
+function isolatedClient(t) {
+  const f = local(t), tokenFile = join(f.directory, 'token');
+  writeFileSync(tokenFile, randomBytes(32).toString('base64url'), { mode: 0o600 });
+  const make = () => new BrokerClient({ url: 'https://broker.invalid/', tokenFile, inbox: f.inbox, now: f.now });
+  return { f, make, client: make() };
+}
+
+test('post-acceptance persistence failure stays unknown for send and resend and recovers the exact operation', async t => {
+  for (const kind of ['send', 'resend']) {
+    const { f, client } = isolatedClient(t), messageId = randomUUID(), calls = [];
+    const request = { recipient_id: randomUUID(), content: { type: 'text/plain', text: 'opaque' } };
+    const sourceId = randomUUID();
+    const key = kind === 'send' ? client.prepareSend(request) : client.prepareResend(sourceId);
+    client.request = async (method, path, options) => {
+      calls.push({ method, path, key: options.key, body: options.body });
+      f.inbox.diskCheck = () => false;
+      return { message_id: messageId };
+    };
+    await assert.rejects(kind === 'send' ? client.sendPrepared(key) : client.resendPrepared(key), { code: 'storage_unavailable', effect: 'unknown' });
+    assert.equal(f.inbox.outgoing(key).result, null);
+    assert.equal(f.inbox.unresolvedSends()[0].key, key);
+    f.inbox.diskCheck = () => true;
+    client.request = async (method, path, options) => {
+      assert.deepEqual({ method, path, key: options.key, body: options.body }, calls[0]);
+      return { message_id: messageId, acceptance_replayed: true };
+    };
+    const recovered = await client.recoverOutgoing();
+    assert.equal(recovered[0].result.message_id, messageId);
+    assert.equal(f.inbox.outgoing(key).result.message_id, messageId);
+    assert.ok(!JSON.stringify(recovered).includes(key));
+    assert.equal(calls[0].path, kind === 'send' ? '/v1/messages' : `/v1/messages/${sourceId}/resend`);
+    assert.deepEqual(calls[0].body, kind === 'send' ? f.inbox.outgoing(key).request : {}, 'resend leaves an unspecified TTL to the broker');
+  }
+});
+
+test('post-acceptance metadata failure remains unknown while pre-dispatch persistence failures keep their effect', async t => {
+  const { f, client } = isolatedClient(t); let calls = 0;
+  client.request = async () => { calls++; return { message_id: randomUUID() }; };
+  const request = { recipient_id: randomUUID(), content: { type: 'text/plain', text: 'opaque' }, metadata_patch: { name: 'updated' }, expected_metadata_revision: 1 };
+  const key = client.prepareSend(request), setState = f.inbox.setState.bind(f.inbox);
+  f.inbox.setState = (name, value) => { if (name === 'metadata') throw new LocalError('storage_unavailable', { effect: 'not_applied' }); return setState(name, value); };
+  await assert.rejects(client.sendPrepared(key), { code: 'storage_unavailable', effect: 'unknown' });
+  const saved = f.inbox.outgoing(key).result;
+  assert.ok(saved.message_id);
+  assert.equal((await client.sendPrepared(key)).message_id, saved.message_id);
+  assert.equal(calls, 1, 'cached acceptance is not dispatched again');
+  f.inbox.setState = setState;
+  const fresh = client.prepareSend({ recipient_id: randomUUID(), content: { type: 'text/plain', text: 'next' } });
+  f.inbox.diskCheck = () => false;
+  await assert.rejects(client.sendPrepared(fresh), { code: 'storage_unavailable', effect: 'not_applied' });
+  f.inbox.diskCheck = () => true; f.inbox.markOutgoingAttempt(fresh); f.inbox.diskCheck = () => false;
+  await assert.rejects(client.sendPrepared(fresh), { code: 'storage_unavailable', effect: 'unknown' });
+  assert.equal(calls, 1, 'both pre-dispatch failures avoid another request');
+  f.inbox.diskCheck = () => true;
+});
+
+test('expired unknown backlog cannot starve eligible recovery or renew expired identities', async t => {
+  const { f, make } = isolatedClient(t);
+  const request = { recipient_id: randomUUID(), content: { type: 'text/plain', text: 'opaque' } };
+  for (let i = 0; i < 105; i++) { const key = f.inbox.prepareSend(request, { retryWindowSeconds: 1 }); f.inbox.markOutgoingAttempt(key); }
+  f.advance(1000);
+  const before = f.inbox.db.prepare('SELECT * FROM outgoing ORDER BY key').all();
+  f.reopen();
+  const client = make(), key = client.prepareSend(request), messageId = randomUUID();
+  f.inbox.markOutgoingAttempt(key);
+  let calls = 0;
+  client.request = async (method, path, options) => {
+    calls++; assert.equal(method, 'POST'); assert.equal(path, '/v1/messages'); assert.equal(options.key, key); assert.deepEqual(options.body, f.inbox.outgoing(key).request);
+    return { message_id: messageId, acceptance_replayed: true };
+  };
+  const recovered = await client.recoverOutgoing({ limit: 1 });
+  assert.equal(recovered.length, 2); assert.equal(recovered[0].result.message_id, messageId);
+  assert.equal(recovered[1].error.code, 'retry_window_elapsed'); assert.equal(recovered[1].error.effect, 'unknown'); assert.equal(recovered[1].count, 105);
+  assert.ok(!JSON.stringify(recovered).includes('op_')); assert.ok(!JSON.stringify(recovered).includes('send_key'));
+  assert.deepEqual(f.inbox.db.prepare('SELECT * FROM outgoing WHERE key<>? ORDER BY key').all(key), before);
+  assert.equal(calls, 1);
+  const plans = f.inbox.db.prepare('EXPLAIN QUERY PLAN SELECT key,created_at,retry_until FROM outgoing WHERE result IS NULL AND failure IS NULL AND retry_until>? ORDER BY retry_until,created_at,key LIMIT ?').all(f.now(), 1);
+  assert.ok(plans.some(row => row.detail.includes('outgoing_recovery'))); assert.ok(plans.every(row => !row.detail.includes('TEMP B-TREE')));
+  client.request = async () => assert.fail('expired operations must not dispatch');
+  assert.deepEqual(await client.recoverOutgoing({ limit: 100 }), [recovered[1]]);
+  assert.throws(() => f.inbox.outgoingRecovery(101), { code: 'invalid_configuration' });
+});
+
+test('request retries preserve the send key, honor backoff and redact remote free text without a socket', async t => {
+  const { f, client } = isolatedClient(t), key = client.prepareSend({ recipient_id: randomUUID(), content: { type: 'text/plain', text: 'opaque' } });
+  const seen = [], sleeps = [], secret = 'synthetic-remote-private-text';
+  client.sleep = async ms => sleeps.push(ms); client.random = () => 0.5;
+  client.requestOnce = async (_method, _path, options) => {
+    seen.push(options.key);
+    if (seen.length === 1) throw new LocalError('request_failed', { effect: 'unknown' });
+    if (seen.length === 2) throw new BrokerError(429, { error: { code: 'rate_limited', message: secret, retryable: true, effect: 'not_applied' } }, 2);
+    return { message_id: randomUUID() };
+  };
+  await client.sendPrepared(key);
+  assert.deepEqual(seen, [key, key, key]); assert.ok(sleeps[1] >= 2000);
+  const error = new BrokerError(429, { error: { code: 'rate_limited', message: secret, details: secret, retryable: true, effect: 'not_applied' } });
+  assert.ok(!JSON.stringify(error.toJSON()).includes(secret));
+  assert.equal(f.inbox.unresolvedSends().length, 0);
+});
+
+test('inbox owner lock rejects a second local owner and allows reopening after close', t => {
+  const f = local(t);
+  assert.throws(() => new Inbox({ directory: f.directory, identity: f.identity }), { code: 'owner_conflict' });
+  f.reopen();
+  assert.equal(f.inbox.stats().ledger_count, 0);
+});
+
+test('v2 replacement needs verified owned-session expiry, preserves old work and consumes its grant once', async t => {
+  const { f, client } = isolatedClient(t); client.registrationVersion = 2;
+  f.inbox.setState('claim_pending', { key: 'old-pending' });
+  let reads = 0;
+  client.request = async (method, path) => {
+    reads++; assert.equal(method, 'GET'); assert.equal(path, `/v1/sessions/${f.identity.client_id}`);
+    throw new BrokerError(404, { error: { code: 'recipient_not_found', effect: 'not_applied' } });
+  };
+  await assert.rejects(client.reconnect({ verifySession: () => false }), { code: 'session_mismatch' });
+  assert.equal(reads, 0); assert.equal(client.expiredIdentityConfirmed, false);
+  await assert.rejects(client.reconnect({ verifySession: () => true }), { code: 'session_expired' });
+  assert.equal(client.expiredIdentityConfirmed, true);
+  await assert.rejects(client.createReplacementInbox({ directory: join(f.directory, 'unverified'), verifySession: () => false }), { code: 'session_mismatch' });
+  await assert.rejects(client.createReplacementInbox({ directory: f.directory, verifySession: () => true }), { code: 'invalid_configuration' });
+  const replacement = await client.createReplacementInbox({ directory: join(f.directory, 'replacement'), verifySession: identity => { assert.deepEqual(identity, f.identity); return true; } });
+  try {
+    assert.notEqual(replacement.identity.client_id, f.identity.client_id);
+    assert.equal(replacement.getState('claim_pending'), null);
+    assert.equal(replacement.stats().ledger_count, 0);
+    assert.deepEqual(f.inbox.getState('claim_pending'), { key: 'old-pending' });
+    assert.equal(client.expiredIdentityConfirmed, false);
+    await assert.rejects(client.createReplacementInbox({ directory: join(f.directory, 'duplicate'), verifySession: () => true }), { code: 'session_mismatch' });
+  } finally { replacement.close(); }
+});
+
+test('v1 absence, a recipient error and authentication failures cannot authorize identity replacement', async t => {
+  const { f, client } = isolatedClient(t), missing = new BrokerError(404, { error: { code: 'recipient_not_found', effect: 'not_applied' } });
+  client.request = async () => { throw missing; };
+  await assert.rejects(client.reconnect({ verifySession: () => true }), { code: 'recipient_not_found' });
+  assert.equal(client.expiredIdentityConfirmed, false);
+  client.registrationVersion = 2;
+  const runtime = new AdapterRuntime({ client, verifySession: () => true, isAlive: () => true });
+  const controller = new AbortController();
+  const key = client.prepareSend({ recipient_id: randomUUID(), content: { type: 'text/plain', text: 'opaque' } });
+  await assert.rejects(client.sendPrepared(key), { code: 'recipient_not_found' });
+  assert.equal(await runtime.handleTransportError(missing, controller.signal), true);
+  assert.equal(client.expiredIdentityConfirmed, false);
+  const unauthorized = new BrokerError(401, { error: { code: 'unauthenticated', effect: 'not_applied' } });
+  client.request = async () => { throw unauthorized; };
+  await assert.rejects(client.reconnect({ verifySession: () => true }), { code: 'unauthenticated' });
+  assert.equal(await runtime.handleTransportError(unauthorized, controller.signal, { ownedSessionOperation: true }), false);
+  assert.equal(client.expiredIdentityConfirmed, false);
+  await assert.rejects(client.createReplacementInbox({ directory: join(f.directory, 'forbidden'), verifySession: () => true }), { code: 'session_mismatch' });
+  assert.equal(client.identity.client_id, f.identity.client_id);
+});
+
+test('confirmed v2 owned-session expiry pauses the runtime and aborts its loop signal without replacing old state', async t => {
+  const { f, client } = isolatedClient(t); client.registrationVersion = 2;
+  const missing = new BrokerError(404, { error: { code: 'recipient_not_found', effect: 'not_applied' } });
+  const diagnostics = [];
+  f.inbox.setState('claim_pending', { key: 'original-claim' });
+  client.request = async (method, path) => { assert.equal(method, 'GET'); assert.equal(path, `/v1/sessions/${f.identity.client_id}`); throw missing; };
+  const runtime = new AdapterRuntime({ client, verifySession: () => true, isAlive: () => true, onDiagnostic: event => diagnostics.push(event.code) });
+  runtime.controller = new AbortController();
+  assert.equal(await runtime.handleTransportError(missing, runtime.controller.signal, { ownedSessionOperation: true }), false);
+  assert.equal(runtime.paused, true); assert.equal(runtime.controller.signal.aborted, true);
+  assert.equal(client.expiredIdentityConfirmed, true); assert.ok(diagnostics.includes('session_expired'));
+  assert.equal(client.identity.client_id, f.identity.client_id);
+  assert.deepEqual(f.inbox.getState('claim_pending'), { key: 'original-claim' });
+});
