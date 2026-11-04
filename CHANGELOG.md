@@ -1,5 +1,43 @@
 # Changelog
 
+## 0.7.0 (source candidate; publish separately)
+
+- Hide revoked installation authorizations from normal administration lists after
+  30 days from revocation while retaining durable replay/collision evidence.
+  Legacy rows receive a persisted first-observed grace period, not an invented
+  revocation timestamp. Archived records no longer consume admission quota.
+  Delivered in #55 / #56.
+- Configure finite installation authorization through `PSST_AUTHORIZATION_DAYS`
+  (1–3650 whole days, default 90) in the normal image/Compose workflow.
+  Expiry is recorded at approval time; pending requests still expire after 24h.
+  Remove pending deadlines from authorization presentation and clearly label
+  historical inactive grants. Delivered in #54 / #57.
+- Add the green Psst double-chevron favicon to login and administration pages,
+  served as a small same-origin static SVG. Delivered in #58 / #59.
+- Align package version, Compose image reference and current release instructions
+  for 0.7.0. No release, image publication or deployment is performed by this PR.
+
+### 0.7.0 upgrade notes
+
+Existing finite grants, private connector receipts, installation/session
+identities and scopes remain unchanged. Changing the lifetime setting applies
+only to new approvals; it does not extend, renew or replace existing authority.
+The finite receipt format remains compatible with shared-helper clients.
+
+Revoked rows remain durable and may grow database/backup storage; monitor
+capacity. Do not purge them or downgrade in place to a binary whose old cleanup
+can discard revocation evidence. See [approval retention and recovery](docs/approval-operator.md#revoked-authorization-retention).
+The added revocation timestamp columns are additive; schema remains 5 for an
+existing 0.6.0 database. Pre-0.6 upgrades retain the existing schema-5 backup
+requirements and [optional session-retention rollout](docs/presence.md#optional-ephemeral-session-retention-registration-v2).
+Session cleanup remains disabled by default and needs a separate operator
+decision; this version does not activate it.
+
+Publish a new `v0.7.0` release only after separately authorizing publication of
+the exact reviewed commit with successful verification. Do not reuse earlier
+tags. Current source and a prepared version number are not a published image.
+See [release instructions](docs/docker-release.md).
+
 ## 0.6.0 (source candidate; publish separately)
 
 - Reject backup paths that overlap SQLite companion files or reuse a destination
@@ -175,3 +213,4 @@ not merely switching the image tag. Restoring loses changes after the backup;
 stale revocation state can restore access. Never run two brokers on one database.
 Credentials expire and require explicit re-pairing; automatic renewal is not
 implemented. See [the migration contract](docs/pairing-protocol.md).
+

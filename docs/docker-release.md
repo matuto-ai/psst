@@ -2,21 +2,28 @@
 
 The normal server package is a **Linux/amd64** image, with Node 24.19.0 and SQLite 3.53.3 inside it. No host Node installation, client launcher, generated certificate or generated credential is needed to start it.
 
-## 0.6.0 source candidate
+## 0.7.0 source candidate
 
 This branch prepares source and aligned version metadata only. It does **not**
 publish a tag, GitHub Release or image, and does not deploy a broker. Do not pull
 the version below until its release workflow has actually succeeded. Review the
-[upgrade and compatibility notes](../CHANGELOG.md#upgrade-and-compatibility)
+[upgrade and compatibility notes](../CHANGELOG.md#070-upgrade-notes)
 before updating an existing installation.
 
-The 0.6.0 candidate adds registration-v2 support and optional disconnected-session
-retention. Cleanup remains **disabled by default** and legacy registration stays
+The 0.7.0 candidate includes the administration favicon, configurable finite
+authorization lifetime and bounded revoked-list visibility with durable
+revocation records. It preserves existing grants and receipts without automatic
+renewal. See [authorization settings and distinct clocks](approval-operator.md#configure-authorization-lifetime).
+
+The registration-v2 support and optional disconnected-session retention from
+0.6.0 remain unchanged. Cleanup remains **disabled by default** and legacy registration stays
 available unless the operator explicitly enables the persistent v2 floor. Updating
 the image does not activate either setting. Keep existing authorization and volumes;
 no re-enrollment is required merely to upgrade the broker.
 
-Database schema advances to **5**. Verify a private backup before upgrading; startup
+For upgrades from pre-0.6.0, database schema advances to **5**. Existing 0.6.0
+databases stay at schema 5 with additive revocation timestamp columns. Verify a
+private backup before upgrading; startup
 also creates an integrity-checked private snapshot before migrating existing storage.
 Do not open the upgraded database with an older binary. See the
 [retention rollout, migration and restore constraints](presence.md#optional-ephemeral-session-retention-registration-v2).
@@ -26,15 +33,15 @@ or native-agent acceptance in the operator's environment.
 
 ## Pull and run
 
-**The image is not published by a source-code push.** Use these commands after GitHub Release `v0.6.0` has completed its Release image workflow successfully. Versioned image: `ghcr.io/matuto-ai/psst:0.6.0`.
+**The image is not published by a source-code push.** Use these commands after GitHub Release `v0.7.0` has completed its Release image workflow successfully. Versioned image: `ghcr.io/matuto-ai/psst:0.7.0`.
 
 ```sh
-docker pull ghcr.io/matuto-ai/psst:0.6.0
+docker pull ghcr.io/matuto-ai/psst:0.7.0
 docker run -d --name ai-agent-msg-broker --restart unless-stopped \
   --read-only --cap-drop ALL --security-opt no-new-privileges \
   -p 127.0.0.1:8787:8787 \
   -v ai-agent-msg-broker-data:/data \
-  ghcr.io/matuto-ai/psst:0.6.0
+  ghcr.io/matuto-ai/psst:0.7.0
 curl --fail --show-error --max-time 5 http://127.0.0.1:8787/healthz
 ```
 
@@ -55,6 +62,10 @@ docker compose up -d
 docker compose logs --tail 30 broker
 ```
 
+For approval-enabled installations, `PSST_AUTHORIZATION_DAYS` selects 1–3650 whole
+days (default 90) for new grants only. Existing grants are not extended. See
+[approval configuration](approval-operator.md#configure-authorization-lifetime).
+
 Configurable environment values: `BROKER_IMAGE` (versioned image or digest), `BROKER_BIND_IP` (default `127.0.0.1`), `BROKER_PORT` (default `8787`, **host-side** port). For example `BROKER_PORT=8788 docker compose up -d` maps host8788 to container8787. Changing a host binding is an explicit operator network decision. `docker compose down` retains data; do **not** add `-v` unless deliberately deleting the broker database.
 
 ### Broker configuration later
@@ -66,7 +77,7 @@ To enroll adapters later, mount a dedicated private directory containing `config
 ## Publish a release — operator action
 
 1. Review and merge the release preparation PR. Select that exact reviewed commit for the release.
-2. Keep `package.json` version and release tag aligned: current version `0.6.0` requires tag **`v0.6.0`**. For another version, update `package.json`, test and commit it first.
+2. Keep `package.json` version and release tag aligned: current version `0.7.0` requires tag **`v0.7.0`**. For another version, update `package.json`, test and commit it first.
 3. In GitHub, publish the release at the reviewed commit. Publishing, not merely saving a draft or pushing a tag, triggers **Release image**.
 4. The workflow runs syntax checks and the focused unit suite against the immutable release event commit. Only after success does it build and push the Linux/amd64 image using the repository's short-lived `GITHUB_TOKEN` with `packages: write`. No registry secret setup is required for this workflow.
 5. Stable releases publish `:VERSION` and `:latest`; prereleases publish only `:VERSION`. The run summary records pull command and image digest. Prefer a version/digest for deployment. Published version tags should not be reused for different source.
@@ -109,3 +120,4 @@ Psst was formerly AI Agent Message Broker. Existing package, container, volume
 and environment names are intentionally retained. Before changing an image path,
 Compose project or installation directory, follow the [inventory, continuity and
 rollback plan](branding-migration.md). A name change is not a database migration.
+
