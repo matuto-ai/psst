@@ -23,6 +23,13 @@ native input/lifecycle behavior. Retain that boundary and the actual acceptance
 cases. A synthetic host API is not an official-host run. Publication, a vendor
 account run and user deployment are separate observations, not new prerequisites.
 
+The continuing [native Pi-to-Pi safety test](native-pi-matrix.md) uses two official
+Pi 1.4.0 processes and the packed merged connector at `5f070a992e43502c7647759fa93b3eb926ffef5b`.
+It adds real native tool-send/provider-input checks for busy arrival, an intact
+human draft, and model selection while abort-paused mail remains pending. It is
+one scoped native subset, not completion of a matrix cell or the 16-route gate.
+The exact final-hop crash window and the external dependencies below remain open.
+
 ## Real upgrade and independent restore
 
 `integration/upgrade-recovery.test.mjs` starts the actual prior entrypoint at

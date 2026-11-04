@@ -18,6 +18,8 @@ args = [control['node'], control['cli'], '--offline', '--no-extensions', '--no-m
         '--no-skills', '--no-context-files', '--no-approve', '--no-prompt-templates',
         '--no-themes', '--no-tools', '--provider', 'faux', '--model', 'faux-1',
         '--name', control['label'], '-e', control['observer'], '-e', control['extension']]
+if control.get('nativeTools'):
+    args.remove('--no-tools')
 if control.get('session'):
     args.extend(['--session', control['session']])
 proc = subprocess.Popen(args, stdin=slave, stdout=slave, stderr=slave, env=env,

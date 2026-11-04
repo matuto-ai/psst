@@ -28,7 +28,7 @@ jobs:
         id: resolve
         run: node scripts/connector-provenance.mjs resolve "$RUNNER_TEMP/current-cohort.json"
   verify:
-    needs: [local-tests, container, rootless-podman, isolated-topology, browser-compose, browser-podman, cooperative-transport, current-transport, candidate-transport, native-presence]
+    needs: [local-tests, container, rootless-podman, isolated-topology, browser-compose, browser-podman, cooperative-transport, current-transport, candidate-transport, native-presence, native-pi-matrix]
     if: ${{ always() }}
     runs-on: ubuntu-24.04
     timeout-minutes: 2
@@ -44,8 +44,45 @@ jobs:
           CURRENT_RESULT: ${{ needs.current-transport.result }}
           CANDIDATE_RESULT: ${{ needs.candidate-transport.result }}
           NATIVE_PRESENCE_RESULT: ${{ needs.native-presence.result }}
+          NATIVE_MATRIX_RESULT: ${{ needs.native-pi-matrix.result }}
           TOPOLOGY_RESULT: ${{ needs.isolated-topology.result }}
-        run: test "$LOCAL_RESULT" = success && test "$CONTAINER_RESULT" = success && test "$PODMAN_RESULT" = success && test "$BROWSER_COMPOSE_RESULT" = success && test "$BROWSER_PODMAN_RESULT" = success && test "$TRANSPORT_RESULT" = success && test "$CURRENT_RESULT" = success && test "$CANDIDATE_RESULT" = success && test "$NATIVE_PRESENCE_RESULT" = success && test "$TOPOLOGY_RESULT" = success
+        run: test "$LOCAL_RESULT" = success && test "$CONTAINER_RESULT" = success && test "$PODMAN_RESULT" = success && test "$BROWSER_COMPOSE_RESULT" = success && test "$BROWSER_PODMAN_RESULT" = success && test "$TRANSPORT_RESULT" = success && test "$CURRENT_RESULT" = success && test "$CANDIDATE_RESULT" = success && test "$NATIVE_PRESENCE_RESULT" = success && test "$NATIVE_MATRIX_RESULT" = success && test "$TOPOLOGY_RESULT" = success
+  native-pi-matrix:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          repository: matuto-ai/pi-psst-connector
+          ref: 5f070a992e43502c7647759fa93b3eb926ffef5b
+          path: .native-matrix/pi
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '24.19.0'
+      - name: Install locked connector fixture dependencies
+        working-directory: .native-matrix/pi
+        run: npm ci --ignore-scripts --legacy-peer-deps --no-audit --no-fund
+      - name: Install pinned official Pi into an isolated fixture
+        run: npm install --prefix "$RUNNER_TEMP/pi-matrix-host" --ignore-scripts --no-audit --no-fund @earendil-works/pi-coding-agent@1.4.0
+      - name: Verify actual two-session native send and input safety
+        run: node --test integration/native-pi-matrix.test.mjs
+        env:
+          PI_TEST_INSTALL: ${{ runner.temp }}/pi-matrix-host
+          PSST_NATIVE_PI_SOURCE: .native-matrix/pi
+          PSST_NATIVE_MATRIX_EVIDENCE: ${{ runner.temp }}/native-pi-matrix.json
+      - name: Keep sanitized native matrix evidence, including partial progress
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: native-pi-matrix
+          path: ${{ runner.temp }}/native-pi-matrix.json
+          if-no-files-found: warn
+          retention-days: 7
   isolated-topology:
     runs-on: ubuntu-24.04
     timeout-minutes: 3
