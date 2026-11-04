@@ -70,7 +70,7 @@ Use an operator-provided certificate for the actual broker hostname, with client
 
 An existing host TLS proxy can terminate HTTPS and forward to `127.0.0.1:8787` using the proxy-loopback config **on that same host/network namespace**. The proxy must preserve Authorization and allow a 30-second long-poll response plus margin. It must not rewrite every caller into a shared credential. Do not publish the backend separately. A container's loopback is not the host's loopback. The explicit `proxy_transport` mode permits ordinary Docker networking on a dedicated trusted same-host container/proxy path; the [server image guide](docker-release.md) documents its boundary. No forwarded header grants identity, client address or HTTPS authority. A remote proxy-to-backend hop needs verified TLS too.
 
-There is no CORS/browser session flow, OAuth enrollment, public tunnel, automatic DNS/firewall/router change, or inbound adapter callback. Each adapter has a configured reachable broker HTTPS URL. `localhost` inside one agent container is not the host or another container. SQLite files stay on broker-local disk; messages cross the network through HTTPS only.
+Agent transport does not use CORS/browser sessions or OAuth. The separate admin UI supports explicit browser approval; it does not make a browser an agent transport. There is no public tunnel, automatic DNS/firewall/router change, or inbound adapter callback. Each adapter has a configured reachable broker HTTPS URL. `localhost` inside one agent container is not the host or another container. SQLite files stay on broker-local disk; messages cross the network through HTTPS only.
 
 ## Container review and rootless Podman example
 
@@ -100,6 +100,16 @@ podman run --name ai-agent-msg-broker --rm \
 
 The direct-TLS config must be named `config.json` in the mounted private directory. `:Z` labels only those dedicated directories for Fedora SELinux; never apply it to an entire home directory. The process runs as the operator-mapped nonroot UID, all capabilities dropped, read-only root filesystem, private state writable. This is a template, not a command this implementation executes. Follow the current [Podman run reference](https://docs.podman.io/en/latest/markdown/podman-run.1.html) for the selected installed version.
 
+For direct container-to-container clients on a legacy rootless bridge, retain a
+unique, locally administered broker MAC together with its fixed private IP in the
+container configuration. Podman4.9.3/Netavark1.4.0 can recreate a new random MAC
+while live clients retain the old ARP entry. Use the supported `--mac-address`
+option for that private broker endpoint; never change a host NIC MAC or flush
+neighbors to mask a failed test. The [recovery acceptance record](issue11-acceptance.md#legacy-rootless-bridge-endpoint-regression)
+retains the unmodified failure and the exact topology-specific mitigation. A LAN
+client of the published host endpoint follows a different path; this is not a
+new requirement to change the host's network configuration.
+
 `deploy/broker.container.example` is a deliberately inactive [Quadlet template](https://docs.podman.io/en/latest/markdown/podman-systemd.unit.5.html). Replace UID/GID, paths and the LAN publish placeholder; review the image and TLS/config mounts before placing a private copy in the rootless user Quadlet directory. Installing/enabling it, selecting autostart/linger, adjusting firewall rules and deploying are separate operator actions. Graceful SIGTERM stops new accepts/claims, terminates long polls, finishes bounded transactions and closes the store.
 
 ## Storage, retention, and recovery
@@ -120,7 +130,9 @@ The destination directory must already be private (`0700`) and operator-owned; t
 
 For restore, stop the broker and all replacement writers, preserve the existing directory for rollback, verify the snapshot in a separate private local directory, and start the same reviewed runtime against that new path. Do not combine a restored database with stale `-wal`/`-shm` files from another database. The ownership sidecar is coordination, not mailbox data; a fresh sidecar belongs to the new restored path. Startup expires all old live leases and requeues unconfirmed claims without erasing uncertainty. Adapters must reconnect with their durable identity/journal before resuming. A broker snapshot does **not** back up adapter-local inbox/deduplication journals; back those up separately with their own SQLite-safe procedure and exact-session lifetime checks.
 
-Schema version 1 is the initial migration; version 2 adds per-claim prior-uncertainty tracking so a definitive negative ACK resolves only its own attempt. The v1-to-v2 migration is tested with persisted pending mail and send idempotency. A higher unknown schema fails startup; there is no automatic downgrade. Before a future migration, create and restore-test a snapshot and rerun recovery tests. Unit fixtures establish pending-message/epoch/dedupe restoration logic; they do not replace a production recovery drill on the chosen disk and container topology.
+Schema version 1 is the initial migration; version 2 adds per-claim prior-uncertainty tracking so a definitive negative ACK resolves only its own attempt. Version 3 adds pairing, version 4 approval/admin state, and version 5 session-retention/registration control. The current entrypoint preserves a private pre-migration snapshot before changing older databases. A higher unknown schema fails startup; there is no automatic downgrade. Before a future migration, create and restore-test a snapshot and rerun recovery tests. The [integrated recovery check](issue11-acceptance.md#real-upgrade-and-independent-restore) runs an actual immutable old entrypoint, upgrades its database and independently restores its online snapshot with four local journals. It does not replace a production recovery drill on the chosen disk and container topology.
+
+For coordinated restore, quiesce new work and retain matching broker and adapter-journal recovery points. Restore into new private directories and preserve originals for rollback. Do not reset identities, erase unknown operations or transfer a journal to a different native conversation to force reconnect. A snapshot predating a later attachment can disagree with the current adapter connection identity; that mismatch requires reconciliation, not silently stealing an attachment. Keep unknown final-hop effects unknown until a supported native receipt or operator recovery resolves them.
 
 Protocol overrides may narrow the wire limits, not enlarge them. Retention must remain at least seven days, registration retry records at least 24 hours, and the lease at least three heartbeat intervals. Database directories must be private (0700) and operator-owned. Scope/type reductions in the verifier file fence affected leases and remove former-scope discovery/send access; a reload never silently grants an existing session new scopes.
 

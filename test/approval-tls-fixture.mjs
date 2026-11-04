@@ -1,5 +1,5 @@
 // Synthetic disposable authority. All network traffic remains local with verified TLS.
-import { mkdtempSync,writeFileSync,readFileSync,rmSync } from 'node:fs';
+import { mkdtempSync,writeFileSync,readFileSync,rmSync,copyFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFile } from 'node:child_process';
@@ -14,17 +14,28 @@ const execute=promisify(execFile);
 export async function approvalTlsFixture(t, { limits = {} } = {}) {
  const directory=mkdtempSync(join(tmpdir(),'psst-real-approval-tls-'));
  const certFile=join(directory,'ca.pem'),keyFile=join(directory,'key.pem'),credentialFile=join(directory,'credentials.json');
- let store,app;
+ let store,app,approval,auth,admin,port=0,restores=0;
+ const password='synthetic-fixture-password-only';
  t.after(async()=>{try{await app?.close();}finally{try{store?.close();}finally{rmSync(directory,{recursive:true,force:true});}}});
  await execute('openssl',['req','-x509','-newkey','rsa:2048','-nodes','-keyout',keyFile,'-out',certFile,'-days','1','-subj','/CN=localhost','-addext','subjectAltName=DNS:localhost,IP:127.0.0.1'],{timeout:10000});
  writeFileSync(credentialFile,'{"credentials":[]}',{mode:0o600});
- store=new BrokerStore({path:join(directory,'broker.sqlite'),limits});
- const approval=await ApprovalService.create({store});
- const auth=new CredentialStore({path:credentialFile,additionalCredentials:()=>approval.credentials(),onRevoke:ids=>store.revoke(ids),onPolicyChange:e=>store.applyAuthorizationPolicies(e)});
- const password='synthetic-fixture-password-only';
- const admin=await AdminUI.create({approval,auth,password});
- app=createBrokerServer({store,auth,approval,admin,host:'127.0.0.1',port:0,tls:{certFile,keyFile},pollIntervalMs:5});
- const address=await app.listen(),brokerUrl=`https://127.0.0.1:${address.port}`;
+ async function open(database){
+  store=await BrokerStore.open({path:database,limits});
+  approval=await ApprovalService.create({store});
+  auth=new CredentialStore({path:credentialFile,additionalCredentials:()=>approval.credentials(),onRevoke:ids=>store.revoke(ids),onPolicyChange:e=>store.applyAuthorizationPolicies(e)});
+  admin=await AdminUI.create({approval,auth,password});
+  app=createBrokerServer({store,auth,approval,admin,host:'127.0.0.1',port,tls:{certFile,keyFile},pollIntervalMs:5});
+  port=(await app.listen()).port;
+ }
+ await open(join(directory,'broker.sqlite'));
+ const brokerUrl=`https://127.0.0.1:${port}`;
+ async function restart({snapshot}={}){
+  const current=store.path;
+  await app.close();store.close();
+  let database=current;
+  if(snapshot){database=join(directory,`restored-${++restores}.sqlite`);copyFileSync(snapshot,database);}
+  await open(database);
+ }
  const request=(path,{method='GET',headers={},body}={})=>new Promise((resolve,reject)=>{
   const req=https.request(new URL(path,brokerUrl),{method,ca:readFileSync(certFile),headers},res=>{const parts=[];res.on('data',c=>parts.push(c));res.on('end',()=>resolve({status:res.statusCode,headers:res.headers,text:Buffer.concat(parts).toString()}));res.on('error',reject);});req.on('error',reject);req.end(body);
  });
@@ -43,5 +54,5 @@ export async function approvalTlsFixture(t, { limits = {} } = {}) {
   const source=`import * as h from ${JSON.stringify(new URL('../reference/approval.mjs',import.meta.url).href)};process.stdout.write(JSON.stringify(await h[process.argv[1]](JSON.parse(process.argv[2]))));`;
   const {stdout}=await runNode(source,[operation,JSON.stringify(options)]);return JSON.parse(stdout);
  }
- return {directory,certFile,brokerUrl,store,auth,approval,admin,app,request,decide,helper,runNode};
+ return {directory,certFile,brokerUrl,get store(){return store},get auth(){return auth},get approval(){return approval},get admin(){return admin},get app(){return app},restart,request,decide,helper,runNode};
 }

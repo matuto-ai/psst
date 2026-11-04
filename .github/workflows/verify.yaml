@@ -10,7 +10,7 @@ concurrency:
   cancel-in-progress: ${{ github.event_name != 'release' }}
 jobs:
   verify:
-    needs: [local-tests, container, rootless-podman, browser-compose, browser-podman, cooperative-transport, current-transport, native-presence]
+    needs: [local-tests, container, rootless-podman, isolated-topology, browser-compose, browser-podman, cooperative-transport, current-transport, candidate-transport, native-presence]
     if: ${{ always() }}
     runs-on: ubuntu-24.04
     timeout-minutes: 2
@@ -24,8 +24,33 @@ jobs:
           BROWSER_PODMAN_RESULT: ${{ needs.browser-podman.result }}
           TRANSPORT_RESULT: ${{ needs.cooperative-transport.result }}
           CURRENT_RESULT: ${{ needs.current-transport.result }}
+          CANDIDATE_RESULT: ${{ needs.candidate-transport.result }}
           NATIVE_PRESENCE_RESULT: ${{ needs.native-presence.result }}
-        run: test "$LOCAL_RESULT" = success && test "$CONTAINER_RESULT" = success && test "$PODMAN_RESULT" = success && test "$BROWSER_COMPOSE_RESULT" = success && test "$BROWSER_PODMAN_RESULT" = success && test "$TRANSPORT_RESULT" = success && test "$CURRENT_RESULT" = success && test "$NATIVE_PRESENCE_RESULT" = success
+          TOPOLOGY_RESULT: ${{ needs.isolated-topology.result }}
+        run: test "$LOCAL_RESULT" = success && test "$CONTAINER_RESULT" = success && test "$PODMAN_RESULT" = success && test "$BROWSER_COMPOSE_RESULT" = success && test "$BROWSER_PODMAN_RESULT" = success && test "$TRANSPORT_RESULT" = success && test "$CURRENT_RESULT" = success && test "$CANDIDATE_RESULT" = success && test "$NATIVE_PRESENCE_RESULT" = success && test "$TOPOLOGY_RESULT" = success
+  isolated-topology:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 3
+    strategy:
+      fail-fast: false
+      matrix:
+        engine: [docker, podman]
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '24.19.0'
+      - name: Build private disposable topology image without publication
+        env:
+          ENGINE: ${{ matrix.engine }}
+        run: "$ENGINE build --target runtime -f Containerfile -t localhost/psst-topology:ci ."
+      - name: Verify two independent isolated topologies, TLS and recovery
+        env:
+          ENGINE: ${{ matrix.engine }}
+        run: for attempt in 1 2; do node scripts/container-topology.mjs "$ENGINE" localhost/psst-topology:ci; done
   native-presence:
     runs-on: ubuntu-24.04
     timeout-minutes: 3
@@ -86,6 +111,16 @@ jobs:
         run: bash -n scripts/start-local-claude-lab.sh scripts/copy-image-node.sh scripts/start-local-broker.sh scripts/start-lan-broker.sh scripts/docker-publish-smoke.sh
       - name: Run local tests
         run: npm test
+      - name: Check out the real immutable prior broker for upgrade recovery
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: bd2dd445de4bf3105f20caafb471f280bf981b63
+          path: .recovery-prior
+          persist-credentials: false
+      - name: Verify prior-entrypoint upgrade and independent SQLite restoration
+        env:
+          PSST_PREVIOUS_BROKER_SOURCE: .recovery-prior
+        run: node --test integration/upgrade-recovery.test.mjs
   container:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
@@ -336,6 +371,59 @@ jobs:
       - name: Verify current packed connectors with explicit synthetic native boundaries
         env:
           PSST_CURRENT_MATRIX_SOURCES: '{"pi":".current-matrix/pi","claude-code":".current-matrix/claude","antigravity-cli":".current-matrix/antigravity","opencode":".current-matrix/opencode"}'
+        run: node --test integration/current-connector-matrix.test.mjs
+      # Real packages, broker/TLS, inboxes, monitor/waiter and operation guards.
+      # Synthetic host input/context, native receipts and model read/ACK actions.
+      # The legacy cooperative cohort remains an independent compatibility lane.
+
+  # Explicit PR dependencies: Pi28, Claude28, Antigravity24, OpenCode20.
+  # This transport-only lane does not replace any native approval or source-PR gate.
+  candidate-transport:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          repository: matuto-ai/pi-psst-connector
+          ref: 95170f56e025b17bff49b6d4d3bbb9897b9256b3
+          path: .candidate-matrix/pi
+          persist-credentials: false
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          repository: matuto-ai/claude-psst-connector
+          ref: 6a8d2f215913f8250a114a9802411eea2595a0e0
+          path: .candidate-matrix/claude
+          persist-credentials: false
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          repository: matuto-ai/antigravity-psst-connector
+          ref: 3bf54ee24703bb38ac1764184e17d50615c67c23
+          path: .candidate-matrix/antigravity
+          persist-credentials: false
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          repository: matuto-ai/opencode-psst-connector
+          ref: c14bc10db807e3ba0b3d6594d5b1c3b8c118f31f
+          path: .candidate-matrix/opencode
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '24.19.0'
+      - name: Install pinned Pi renderer dependency without peer hosts or scripts
+        working-directory: .candidate-matrix/pi
+        run: npm ci --ignore-scripts --legacy-peer-deps --no-audit --no-fund
+      - name: Install pinned OpenCode runtime schema dependency without host or scripts
+        working-directory: .candidate-matrix/opencode
+        run: npm ci --ignore-scripts --omit=dev --no-audit --no-fund
+      - name: Check current matrix sources
+        run: for source in integration/current-*.mjs; do node --check "$source"; done
+      - name: Verify explicitly unmerged candidate packages with synthetic native boundaries
+        env:
+          PSST_CURRENT_MATRIX_SOURCES: '{"pi":".candidate-matrix/pi","claude-code":".candidate-matrix/claude","antigravity-cli":".candidate-matrix/antigravity","opencode":".candidate-matrix/opencode"}'
         run: node --test integration/current-connector-matrix.test.mjs
       # Real packages, broker/TLS, inboxes, monitor/waiter and operation guards.
       # Synthetic host input/context, native receipts and model read/ACK actions.

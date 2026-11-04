@@ -35,7 +35,12 @@ permissions or deployment is changed.
 7. A same-conversation restart after that crash receives offline queued mail.
    Actual `/new` in the live restarted process produces a different conversation
    and broker identity, and disconnects the old one without terminally closing it.
-8. All transitions reuse the same approved installation. Every owned native
+8. At an actually idle native boundary, broker heartbeat time advances without
+   any provider call. Actual `/model faux-2` changes the native selected model
+   and broker metadata while preserving conversation and mailbox identity.
+   A subsequent message reaches the provider input, carrying its message ID and
+   explicit untrusted-agent source label.
+9. All transitions reuse the same approved installation. Every owned native
    process and process group is stopped and reaped before fixture storage removal,
    including when an assertion fails.
 

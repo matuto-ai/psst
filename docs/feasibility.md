@@ -7,6 +7,8 @@ Broker `delivered` stops at the exact recipient's durable adapter inbox. Native
 history persistence, model-visible input, an explicit read ACK and successful work
 are separate observations.
 
+The [original acceptance ledger](issue11-acceptance.md) consolidates packaging, recovery and topology. A controlled local provider with a real pinned host is valid evidence within its observed scope; a paid/vendor-authenticated model account is not an additional universal requirement.
+
 This record reconciles evidence available on **2026-11-03** for
 [issue #11](https://github.com/matuto-ai/psst/issues/11). It includes newer connector
 qualification without treating isolated fixtures as the complete native matrix.
@@ -111,8 +113,9 @@ than automatically replaying an ambiguous native submission.
   CLIs, login, real model response or production setup.
 
 Keep [#11](https://github.com/matuto-ai/psst/issues/11) open for the integrated
-packaging/recovery/native gates and [#29](https://github.com/matuto-ai/psst/issues/29)
-open for remaining lifecycle/offline-notice acceptance. The connector trackers
+native and external environment gates. The original lifecycle/offline-notice
+acceptance in [#29](https://github.com/matuto-ai/psst/issues/29) was completed by
+[#46](https://github.com/matuto-ai/psst/pull/46); do not reopen it by adding broader #11 requirements. The connector trackers
 remain [Pi #12](https://github.com/matuto-ai/pi-psst-connector/issues/12),
 [Antigravity #8](https://github.com/matuto-ai/antigravity-psst-connector/issues/8),
 [Claude #11](https://github.com/matuto-ai/claude-psst-connector/issues/11) and
