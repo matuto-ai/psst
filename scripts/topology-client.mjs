@@ -36,7 +36,12 @@ async function networkProbe() {
     });
     request.on('error', reason => resolve({ error: reason.code }));
   });
-  return { dns, https };
+  let neighbor = null;
+  try {
+    const row = readFileSync('/proc/net/arp', 'utf8').split('\n').map(line => line.trim().split(/\s+/)).find(row => row[0] === dns.address);
+    if (row) neighbor = { mac: row[3], flags: row[2], device: row[5] };
+  } catch {}
+  return { dns, https, neighbor };
 }
 let closed = false;
 async function close() {
