@@ -37,7 +37,7 @@ export async function createDriver({packageRoot,installation,runtime,nativeId,br
       append({type:'custom_message',id:randomUUID(),timestamp:new Date().toISOString(),...structuredClone(message)});
     },
   };
-  const schema={Object:()=>({}),String:()=>({}),Optional:()=>({}),Integer:()=>({})};
+  const schema={Boolean:()=>({}),Object:()=>({}),String:()=>({}),Optional:()=>({}),Integer:()=>({})};
   installExtension(pi,schema,{env,pathStore:store,createSession:options=>{owner=new PiBrokerSession(options);return owner;}});
   if(tools.broker_receive||tools.broker_acknowledge)throw Error('matrix_diagnostic_tools_exposed');
   await events.session_start({},ctx);

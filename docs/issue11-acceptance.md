@@ -99,6 +99,26 @@ explicitly report nativeHostCertification=false and twoPhysicalHosts=false. The
 local probe test validates its control protocol and TLS, not container isolation.
 Actual container evidence comes from the engine runs.
 
+## Explicit unmerged candidate cohort
+
+A separate required `candidate-transport` lane reruns the same 43-delivery package
+transport, pending-journal, snapshot and recovery suite against these immutable PR
+heads. The existing merged-main and legacy cohorts stay unchanged.
+
+| Candidate dependency | Exact revision |
+| --- | --- |
+| [Pi #28](https://github.com/matuto-ai/pi-psst-connector/pull/28) | `95170f56e025b17bff49b6d4d3bbb9897b9256b3` |
+| [Claude #28](https://github.com/matuto-ai/claude-psst-connector/pull/28) | `6a8d2f215913f8250a114a9802411eea2595a0e0` |
+| [Antigravity #24](https://github.com/matuto-ai/antigravity-psst-connector/pull/24) | `3bf54ee24703bb38ac1764184e17d50615c67c23` |
+| [OpenCode #20](https://github.com/matuto-ai/opencode-psst-connector/pull/20) | `c14bc10db807e3ba0b3d6594d5b1c3b8c118f31f` |
+
+These are source candidates, not released or approved packages. In particular,
+Antigravity's actual automatic-arrival gate is still blocked by its native
+permission prompt. This synthetic-boundary compatibility lane neither interacts
+with that prompt nor substitutes for its required real-host permission and runtime
+evidence. Each source PR retains its own gates; a passing transport lane does not
+certify automatic native delivery, permit a release or close the original issues.
+
 ## Exact remaining external dependencies
 
 No connected computer or saved execution environment was available during this
