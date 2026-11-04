@@ -1,6 +1,6 @@
 # Operations and reproducible checks
 
-This is a reviewable broker-core/reference runtime, not an installed service. No host networking, firewall rule, real credential, CLI installation, or deployment is created by these examples. Real CLI final-hop support and two-host LAN/Fedora deployment conformance have separate gates in [feasibility.md](feasibility.md).
+This is a reviewable broker-core/reference runtime, not an installed service. No host networking, firewall rule, real credential, CLI installation, or deployment is created by these examples. Real CLI final-hop support and two-host LAN/Fedora deployment conformance remain separate verification in [feasibility.md](feasibility.md). The owner deferred integrated tests to the owner's machine; they are not current [issue #11 acceptance](issue11-acceptance.md#current-acceptance) gates.
 
 For the conventional server image, start with [Docker / Compose and release](docker-release.md). The remaining sections cover configuration, direct TLS and optional Podman deployment variants.
 
