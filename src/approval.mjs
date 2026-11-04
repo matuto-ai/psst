@@ -75,7 +75,8 @@ export class ApprovalService {
       // Denied/expired cleanup is unchanged. Revoked records are durable tombstones:
       // deleting them would lose replay and key/identity collision protection.
       this.store.db.prepare("DELETE FROM approval_requests WHERE state IN ('denied','expired') AND max(deadline,coalesce(expires,deadline))<?").run(this.store.clock()-2592000000);
-      if(this.store.db.prepare('SELECT count(*) n FROM approval_requests').get().n>=10000
+      // Archived revocations reserve identities, not live admission capacity.
+      if(this.store.db.prepare("SELECT count(*) n FROM approval_requests WHERE state!='revoked' OR coalesce(revoked_at,revocation_observed_at)>?").get(this.store.clock()-REVOKED_RETENTION_MS).n>=10000
         ||this.store.db.prepare("SELECT count(*) n FROM approval_requests WHERE state='pending'").get().n>=1000)throw new ApiError(429,'rate_limited',null,{retryable:true,retry_after:60});
       const now=this.store.clock();
       this.store.db.prepare('INSERT INTO approval_requests(id,token_hash,request,type,label,state,created,deadline) VALUES(?,?,?,?,?,?,?,?)').run(id,tokenHash,request,input.client_type,input.label,'pending',now,now+this.pendingMs);

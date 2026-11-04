@@ -96,3 +96,32 @@ test('denied and expired cleanup policies remain separate from revoked visibilit
  assert.equal(row(f,deniedRequest),undefined);assert.equal(row(f,expired),undefined);
  assert.equal(row(f,revoked).state,'revoked');
 });
+
+test('archived revocations release admission capacity without losing replay or identity reservations',async t=>{
+ const f=fixture(t),approval=await ApprovalService.create({store:f.store});
+ const original=enroll(approval);approval.decide(original.body.request_id,'revoke');
+ // Model a long-lived installation history without 10,000 approval round trips.
+ f.store.tx(()=>{
+  const insert=f.store.db.prepare("INSERT INTO approval_requests(id,token_hash,request,type,label,state,created,deadline,revoked_at) VALUES(?,?,?,'pi','','revoked',?,?,?)");
+  for(let i=0;i<9999;i++)insert.run(randomUUID(),i.toString(16).padStart(64,'0'),'{}',f.now,f.now+86400000,f.now);
+ });
+ const fresh=candidate();
+ const request=()=>approval.request(fresh.header,fresh.body);
+ assert.throws(request,e=>e.status===429);
+ f.advance(REVOKED_RETENTION_MS-1);
+ assert.throws(request,e=>e.status===429);
+ f.advance(1);
+ assert.equal(request().status,201);
+ assert.equal(f.store.db.prepare('SELECT count(*) n FROM approval_requests').get().n,10001);
+ assert.equal(approval.request(original.header,original.body).result.state,'revoked');
+ assert.throws(()=>approval.request(original.header,{...original.body,request_id:randomUUID()}),e=>e.status===409);
+ assert.equal(approval.reservations().length,10001);
+ assert.deepEqual(approval.list().map(r=>r.id),[fresh.body.request_id]);
+ // Archival never relaxes the separate pending request bound.
+ f.store.tx(()=>{
+  const insert=f.store.db.prepare("INSERT INTO approval_requests(id,token_hash,request,type,label,state,created,deadline) VALUES(?,?,?,'pi','','pending',?,?)");
+  for(let i=10000;i<10999;i++)insert.run(randomUUID(),i.toString(16).padStart(64,'0'),'{}',f.now,f.now+86400000);
+ });
+ const overflow=candidate();
+ assert.throws(()=>approval.request(overflow.header,overflow.body),e=>e.status===429);
+});

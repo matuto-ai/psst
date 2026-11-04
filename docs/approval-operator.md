@@ -92,9 +92,13 @@ Revoked rows are excluded from terminal garbage collection. There is no safe
 automatic deletion boundary while old clients may poll/replay or reuse the key:
 hiding a record must not forget the revocation or collision reservation. This
 release conservatively retains the existing terminal record rather than
-introducing a second archive format. The existing 10,000 total-request safety
-limit still counts these records and may eventually reject new requests with
-429; do not delete tombstones to bypass that guard. Denied and expired requests
+introducing a second archive format. The 10,000-request admission bound counts
+non-revoked records and revoked records still inside their visibility window.
+Archived revocations do not consume admission capacity, so historical revocations
+cannot permanently prevent new setup. The separate 1,000-pending-request limit
+is unchanged. Durable tombstones still consume disk space and backup capacity;
+operators should monitor storage growth. Do not delete them to reclaim space:
+there is no automatic tombstone purge or storage quota that forgets revocation. Denied and expired requests
 keep their existing, separate cleanup rule: on new enrollment, delete records
 more than 30 days past the later of request deadline and credential expiry.
 Pending/approved requests, session identities and message retention are unchanged.
