@@ -2,6 +2,9 @@
 
 ## 0.6.0 (source candidate; publish separately)
 
+- Reject backup paths that overlap SQLite companion files or reuse a destination
+  with existing sidecars. Apply the same no-overwrite checks to store backups so
+  snapshot creation cannot delete or overwrite the source or unrelated journals.
 - Add opt-in disconnected-session retention with registration-v2 freshness, a
   durable global fencing counter, and an explicit persistent v2 enforcement gate.
 - Preserve active-peer receipt/retry windows and outgoing delivery; remove expired
