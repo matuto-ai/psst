@@ -78,16 +78,17 @@ All 12 cross-family and four distinct-session same-family routes assert exact
 sender, recipient, body and untrusted-agent provenance. Delivered items remain
 pending with no fabricated native receipt. The test removes/recreates recipients,
 queues four offline messages, kills/restarts the broker, verifies persistent
-identities/journals/dedupe, and runs three concurrent routes. The broker container
-is killed and started again; its private service IP is required to stay unchanged.
-Podman receives an explicit IP in the new empty private subnet, since its automatic
-allocation changes on restart. Docker retains its original allocation.
-Every disposable peer has an explicit container-local `broker` host mapping to
-that address, and still verifies the TLS hostname and CA. No host routing, DNS or
-security setting is modified. An exploratory rootless dynamic-DNS run timed out
-resolving `broker` from surviving peers after container restart, while recreated
-peers connected. That dynamic-resolver mode and address replacement are not
-certified. Model metadata
+identities/journals/dedupe, and runs three concurrent routes. Docker kills and
+restarts the actual broker container. Podman kills the actual production broker
+child and verifies a new PID from a test-only supervisor that retains the container
+network namespace. Recipient containers are independently recreated on both engines.
+
+**Known hosted Podman limitation:** ordinary container stop/start and replacement
+left surviving peers unable to reconnect, while recreated peers connected. An
+explicit stable IP and container-local host mapping fixed name resolution but
+fresh TLS still timed out. That rootless container-runtime/network recovery is not
+certified, and no host routing, DNS or security setting is changed to hide it.
+The Podman check proves broker process/storage recovery only. Model metadata
 changes preserve identity in this reference topology. The separate actual Pi
 probe verifies native model selection with identity continuity, source labels
 in provider input, and an idle heartbeat renewal with zero provider calls. Containers are
