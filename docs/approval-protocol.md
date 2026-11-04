@@ -16,7 +16,9 @@ A pending key has no access to messaging or discovery.
 
 Response: `{request_id,state,request_expires_at,credential?}`. States:
 `pending -> approved | denied | expired`; `approved -> revoked | expired`.
-Pending requests expire after24h. Approved authorization lasts90days.
+Pending requests expire after 24h. Approved authorization defaults to 90 days,
+configurable through PSST_AUTHORIZATION_DAYS (integer 1–3650 days). A day is
+86,400,000 milliseconds; expiry is calculated at approval time and persisted.
 Credential is the existing `{credential_id,adapter_id,client_type,scopes,
 expires_at,protocol_version:'1'}` receipt. No secret is returned. Status possession
 is checked even for terminal requests. Unknown IDs/proofs reveal no request data.
@@ -64,3 +66,22 @@ privately across processes. An active explicit setup may retry its initial POST
 with the SAME UUID/key; normal startup still performs GET only. If the first POST
 never reached the broker, require explicit continuation instead of creating a
 request automatically. Unknown outcomes never generate replacement identities.
+
+
+
+## Finite lifetime compatibility
+
+The wire and receipt formats remain unchanged: `credential.expires_at` is always
+a finite ISO timestamp. There is no unlimited value or missing-expiry variant.
+`request_expires_at` is the pending authorization boundary, not a grant expiry.
+The normal image/Compose entrypoint validates `PSST_AUTHORIZATION_DAYS` before
+opening storage; see [operator settings](approval-operator.md#configure-authorization-lifetime).
+
+Only new approvals use the configured duration. Existing grants, receipts,
+request replay, repeated approval and restarts keep the exact original expiry
+and identities. The shared helper's receipt reader and local status use that
+expiry for pi, claude-code, opencode and antigravity-cli without a format change;
+the broker separately enforces revocation. At `now >= expires_at`, a receipt is
+expired and cannot authorize API access. Pending requests likewise cannot be
+approved at or after their separate 24-hour deadline. No automatic replacement,
+renewal or periodic per-session setup is introduced.

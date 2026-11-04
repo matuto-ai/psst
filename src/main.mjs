@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { BrokerStore } from './store.mjs';
-import { ApprovalService } from './approval.mjs';
+import { ApprovalService, approvalOptionsFromEnvironment } from './approval.mjs';
 import { AdminUI } from './admin.mjs';
 import { EnrollmentService } from './enrollment.mjs';
 import { CredentialStore } from './auth.mjs';
@@ -17,9 +17,10 @@ try{
   if(typeof config.database!=='string'||typeof config.credential_file!=='string')throw new Error('Database and credential_file are required.');
   const password=process.env.PSST_ADMIN_PASSWORD;
   if(password!==undefined&&password!==''&&(password.length<16||password.length>1024))throw new Error('Invalid administrator password configuration.');
+  const approvalOptions=approvalOptionsFromEnvironment(process.env);
   store=await BrokerStore.open({path:config.database,limits:config.limits,requireRegistrationV2:config.require_registration_v2});
   const enrollment=config.enrollment_policy_file===undefined?undefined:new EnrollmentService({store,policyFile:config.enrollment_policy_file});
-  const approval=password?await ApprovalService.create({store}):undefined;
+  const approval=password?await ApprovalService.create({store,...approvalOptions}):undefined;
   const auth=new CredentialStore({path:config.credential_file,additionalCredentials:()=>[...(enrollment?.credentials()??[]),...(approval?.credentials()??[])],onRevoke:ids=>store.revoke(ids),onPolicyChange:entries=>store.applyAuthorizationPolicies(entries)});
   const reservations=()=>[...(enrollment?.reservations()??[]),...(approval?.reservations()??[])];
   const admin=approval?await AdminUI.create({approval,auth,password,reservations,publicOrigin:process.env.PSST_PUBLIC_ORIGIN||undefined,insecureDevelopment:config.insecure_development??false}):undefined;
@@ -31,4 +32,5 @@ try{
     : 'Broker listening with no active credentials. Health is available; all API requests are denied and readiness is unavailable.');
   let closing=false;const stop=async()=>{if(closing)return;closing=true;await app.close();store.close();};
   process.on('SIGINT',()=>stop().catch(()=>process.exitCode=1));process.on('SIGTERM',()=>stop().catch(()=>process.exitCode=1));
-}catch{console.error('Broker startup failed. Check private configuration, TLS, and local storage.');try{await app?.close();store?.close();}catch{}process.exitCode=1;}
+}catch(error){console.error(error.code==='invalid_authorization_days'?error.message:'Broker startup failed. Check private configuration, TLS, and local storage.');try{await app?.close();store?.close();}catch{}process.exitCode=1;}
+

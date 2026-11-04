@@ -39,7 +39,8 @@ opened. See [admin console identities, filters and retention](admin-console.md).
    pending request can resume GET-only after restart; ordinary startup never
    submits a new request or rotates the key.
 
-Requests expire after24hours; approved credentials expire90days after approval.
+Requests expire after 24 hours; approved credentials expire 90 days after approval
+by default, configurable as described below.
 Expired/denied setup needs an explicit new setup decision, never silent renewal.
 The UI can revoke an installation. This stops its current and future API access,
 including long polls. Replacement approval does not silently revoke an old
@@ -121,3 +122,55 @@ binary against an upgraded database: it can discard retained revocation evidence
 Use the established private backup/recovery process for rollback, and account for
 decisions made after a backup before serving traffic. No production cleanup or
 deployment is part of this change.
+
+
+## Configure authorization lifetime
+
+For the normal image/Compose workflow, set `PSST_AUTHORIZATION_DAYS` in the
+deployment environment or Compose `.env` file, for example
+`PSST_AUTHORIZATION_DAYS=730`, then recreate the broker normally. Compose forwards
+it to the same `src/main.mjs` entrypoint used by the image. When running the image
+directly, pass the same environment variable. Use an image built from a release
+containing this change; the existing 0.6.0 image does not support it. This source
+change does not publish an image or deploy anything.
+
+The supported values are decimal whole numbers **1–3650 days inclusive**, with
+no spaces, sign, leading zero, fraction, or `unlimited` value. One year is 365
+days; 730 is two years. A day is exactly 86,400,000 milliseconds, independent of
+DST or calendar-year length. The default remains 90 days when unset; Compose
+also uses 90 for an empty variable. Direct invocation rejects an explicitly
+empty value. Invalid values fail startup with a named setting/bounds message,
+before the database is opened, even when the admin UI is disabled.
+
+The setting applies **at approval time to new approvals only**. The broker stores
+the finite expiry in the grant and returns it in the unchanged receipt format.
+It is not computed from the pending request's creation time. Restarting, replaying
+the request, repeating approve, or changing this setting never renews an existing
+grant. No unlimited or far-future sentinel representation is supported.
+
+### Existing installations and distinct clocks
+
+Existing grants and private connector receipts keep their original finite expiry,
+credential ID, installation ID and session identities. They continue to work
+until their recorded expiry, unless explicitly revoked first. There is no
+automatic extension, receipt rewrite, key rotation, per-session enrollment or
+in-place renewal. If a replacement is needed, explicitly start setup in the
+connector, approve that new request, verify it works and select it using the
+connector's normal workflow; revoke the old installation explicitly afterward.
+A replacement is a new installation identity, not a migration of existing sessions.
+
+- A pending request has **24 hours** to receive explicit approval and has no API
+  authority. Its deadline remains in protocol status for connector polling, but
+  is no longer displayed as an authorization expiry in the administration list.
+- An approved installation has the actual finite **authorization expiry** shown.
+  Revoked/expired installations show their historical expiry as **inactive**,
+  even when the original date is in the future. Never-granted requests display
+  **No authorization granted**. The separate **Requested** creation time remains.
+- Administrator login duration, transport heartbeat/leases, message/session
+  retention and the 30-day revoked visibility policy remain unchanged.
+
+At the exact authorization expiry, both the broker and the shared helper reject
+the grant. All four shared-helper client types consume the same finite
+`expires_at` value; no receipt-format or connector configuration change is needed.
+Local receipt validity is not proof that a grant has not been revoked: the broker
+enforces revocation immediately on authenticated API access.

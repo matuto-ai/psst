@@ -6,6 +6,19 @@ import { ApiError, TYPES, canonical, validateUuid } from './protocol.mjs';
 
 // Revocation visibility is separate from durable replay/collision protection.
 export const REVOKED_RETENTION_MS=30*24*60*60*1000;
+const DAY_MS=24*60*60*1000;
+export const MAX_AUTHORIZATION_DAYS=3650;
+export function authorizationDurationMs(value='90'){
+  if(typeof value!=='string'||!/^[1-9][0-9]{0,3}$/.test(value)||Number(value)>MAX_AUTHORIZATION_DAYS){
+    const error=new Error('PSST_AUTHORIZATION_DAYS must be a whole number from 1 to 3650 (default 90).');
+    error.code='invalid_authorization_days';throw error;
+  }
+  return Number(value)*DAY_MS;
+}
+// Shared startup seam: validate before the caller opens storage.
+export function approvalOptionsFromEnvironment(env={}){
+  return {credentialMs:authorizationDurationMs(env.PSST_AUTHORIZATION_DAYS)};
+}
 const hash=s=>createHash('sha256').update(s).digest('hex');
 const iso=n=>new Date(n).toISOString();
 const deny=()=>{throw new ApiError(401,'unauthenticated');};
@@ -25,7 +38,7 @@ export class ApprovalService {
   constructor({store,scope='psst',principal='owner',pendingMs=86400000,credentialMs=7776000000}) {
     if(!/^[-a-zA-Z0-9_.]{1,128}$/.test(scope)||!/^[-a-zA-Z0-9_.]{1,128}$/.test(principal)
       ||!Number.isSafeInteger(pendingMs)||pendingMs<1000||pendingMs>86400000
-      ||!Number.isSafeInteger(credentialMs)||credentialMs<1000||credentialMs>31536000000)throw Error('invalid_approval_settings');
+      ||!Number.isSafeInteger(credentialMs)||credentialMs<1000||credentialMs>MAX_AUTHORIZATION_DAYS*DAY_MS)throw Error('invalid_approval_settings');
     Object.assign(this,{store,scope,principal,pendingMs,credentialMs});
     store.tx(()=>{store.db.exec(`CREATE TABLE IF NOT EXISTS approval_requests (
       id TEXT PRIMARY KEY, token_hash TEXT UNIQUE NOT NULL, request TEXT NOT NULL,

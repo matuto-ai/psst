@@ -3,6 +3,7 @@ services:
     image: ${BROKER_IMAGE:-ghcr.io/matuto-ai/psst:0.6.0}
     environment:
       PSST_ADMIN_PASSWORD: ${PSST_ADMIN_PASSWORD:-}
+      PSST_AUTHORIZATION_DAYS: ${PSST_AUTHORIZATION_DAYS:-90}
       PSST_PUBLIC_ORIGIN: ${PSST_PUBLIC_ORIGIN:-}
     restart: unless-stopped
     read_only: true
@@ -15,3 +16,4 @@ services:
     stop_grace_period: 10s
 volumes:
   broker-data:
+
