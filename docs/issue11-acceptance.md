@@ -83,12 +83,17 @@ restarts the actual broker container. Podman kills the actual production broker
 child and verifies a new PID from a test-only supervisor that retains the container
 network namespace. Recipient containers are independently recreated on both engines.
 
-**Known hosted Podman limitation:** ordinary container stop/start and replacement
-left surviving peers unable to reconnect, while recreated peers connected. An
-explicit stable IP and container-local host mapping fixed name resolution but
-fresh TLS still timed out. That rootless container-runtime/network recovery is not
-certified, and no host routing, DNS or security setting is changed to hide it.
-The Podman check proves broker process/storage recovery only. Model metadata
+**Observed hosted Podman limitation:** surviving peers intermittently lost DNS
+or fresh TLS connectivity under concurrent container provisioning/removal, including
+both container restart and process-only restart scenarios. Recreated peers could
+connect. Correct static DNS/IP did not resolve every case, so namespace replacement
+alone is not an established root cause. The fixture serializes rootless container
+lifecycle operations, supplies container-local host mappings for the unchanged
+private broker IP, and verifies fresh name resolution/TLS before and after
+recovery and recipient recreation; actual message exchange remains concurrent. No host routing,
+DNS or security setting is changed. Two independent runs per engine are required.
+The Podman check proves process/storage recovery only, not full container-runtime
+network recovery. Model metadata
 changes preserve identity in this reference topology. The separate actual Pi
 probe verifies native model selection with identity continuity, source labels
 in provider input, and an idle heartbeat renewal with zero provider calls. Containers are

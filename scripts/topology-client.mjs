@@ -24,6 +24,20 @@ const inbox = new Inbox({ directory: join(directory, 'journal'), identity });
 const client = new BrokerClient({ url: config.url, tokenFile: config.token, caFile: config.ca, inbox, requestTimeoutMs: 2000, maxAttempts: 3 });
 const runtime = new AdapterRuntime({ client, verifySession: () => true, isAlive: () => true });
 const metadata = { name: 'disposable-topology-probe', model: { provider: 'fixture', id: 'before', source: 'configured' }, project: null };
+async function networkProbe() {
+  const host = new URL(config.url).hostname;
+  let timer;
+  const dns = await Promise.race([lookup(host).then(value => ({ address: value.address }), reason => ({ error: reason.code })),
+    new Promise(resolve => { timer = setTimeout(() => resolve({ error: 'timeout' }), 1500); })]);
+  clearTimeout(timer);
+  const https = await new Promise(resolve => {
+    const request = get(new URL('/healthz', config.url), { ca: client.ca, agent: false, signal: AbortSignal.timeout(1500) }, response => {
+      response.resume(); resolve({ status: response.statusCode });
+    });
+    request.on('error', reason => resolve({ error: reason.code }));
+  });
+  return { dns, https };
+}
 let closed = false;
 async function close() {
   if (closed) return;
@@ -46,7 +60,8 @@ try {
       if (command === 'send') {
         const key = client.prepareSend({ recipient_id: args.recipient, content: { type: 'text/plain', text: args.text } }, { key: args.key });
         value = await client.sendPrepared(key);
-      } else if (command === 'receive') value = await runtime.receiveOnce({ waitSeconds: 0 });
+      } else if (command === 'probe') value = await networkProbe();
+      else if (command === 'receive') value = await runtime.receiveOnce({ waitSeconds: 0 });
       else if (command === 'status') value = await client.messageStatus(args.message_id);
       else if (command === 'observe') {
         const row = inbox.db.prepare('SELECT state,envelope,native_receipt FROM inbox WHERE message_id=?').get(args.message_id);
@@ -63,17 +78,7 @@ try {
       // reuse from DNS/network failure after an engine namespace restart.
       let diagnostics;
       if (error.code === 'request_failed') {
-        const host = new URL(config.url).hostname;
-        const dns = await Promise.race([lookup(host).then(value => ({ address: value.address }), reason => ({ error: reason.code })),
-          delay(1500).then(() => ({ error: 'timeout' }))]);
-        const https = await new Promise(resolve => {
-          const request = get(new URL('/healthz', config.url), { ca: client.ca, agent: false, timeout: 1500 }, response => {
-            response.resume(); resolve({ status: response.statusCode });
-          });
-          request.on('error', reason => resolve({ error: reason.code }));
-          request.on('timeout', () => { request.destroy(); resolve({ error: 'timeout' }); });
-        });
-        diagnostics = { dns, https };
+        diagnostics = await networkProbe();
       }
       process.stdout.write(JSON.stringify({ id, error: error.code ?? 'topology_probe_failed', diagnostics }) + '\n');
     }

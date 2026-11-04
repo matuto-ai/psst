@@ -42,6 +42,7 @@ test('topology probe uses real verified TLS and retains local mail on subprocess
   }
   const sender = await launch(await configuration('pi')), config = await configuration('opencode');
   let receiver = await launch(config); const id = receiver.identity.client_id;
+  const fresh = await sender.call('probe'); assert.ok(fresh.dns.address); assert.equal(fresh.https.status, 200);
   const first = await sender.call('send', { recipient: id, text: 'disposable pending message', key: 'same-operation' });
   assert.equal((await receiver.call('receive')).stored, true);
   const before = await receiver.call('observe', { message_id: first.message_id });

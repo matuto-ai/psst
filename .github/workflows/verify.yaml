@@ -47,10 +47,10 @@ jobs:
         env:
           ENGINE: ${{ matrix.engine }}
         run: "$ENGINE build --target runtime -f Containerfile -t localhost/psst-topology:ci ."
-      - name: Verify eight isolated reference adapters, TLS and recovery
+      - name: Verify two independent isolated topologies, TLS and recovery
         env:
           ENGINE: ${{ matrix.engine }}
-        run: node scripts/container-topology.mjs "$ENGINE" localhost/psst-topology:ci
+        run: for attempt in 1 2; do node scripts/container-topology.mjs "$ENGINE" localhost/psst-topology:ci; done
   native-presence:
     runs-on: ubuntu-24.04
     timeout-minutes: 3

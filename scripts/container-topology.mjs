@@ -23,12 +23,26 @@ const peers = types.flatMap(type => [0, 1].map(index => ({ type, index, name: `$
   data: join(directory, `${type}-${index}-data`), private: join(directory, `${type}-${index}-private`) })));
 const hardening = [...(engine === 'podman' ? ['--userns=keep-id'] : []), '--user', `${uid}:${gid}`,
   '--read-only', '--cap-drop=ALL', '--security-opt=no-new-privileges', '--network', network, '--pull=never'];
-const children = new Set(); let networkCreated = false;
+// Rootless engines mutate one shared unprivileged networking namespace. Avoid
+// concurrent provisioning/teardown races; message exchange still runs concurrently.
+async function lifecycle(items, operation) {
+  if (engine === 'podman') { const values = []; for (const item of items) values.push(await operation(item)); return values; }
+  return Promise.all(items.map(operation));
+}
+async function healthy(peers, phase) {
+  for (const peer of peers) {
+    const probe = await peer.call('probe');
+    assert.ok(probe.dns.address, `${phase} ${peer.type} fresh name resolution: ${JSON.stringify(probe)}`);
+    assert.equal(probe.https.status, 200, `${phase} ${peer.type} fresh verified TLS: ${JSON.stringify(probe)}`);
+  }
+}
+const children = new Set(); let networkCreated = false, brokerAddress;
 const startBroker = () => run(['run', '--detach', '--name', broker, '--network-alias', 'broker', ...hardening,
   '--volume', `${brokerData}:/data:rw`, '--volume', `${brokerPrivate}:/run/broker:ro`, image,
   ...(engine === 'podman' ? ['node', 'scripts/topology-broker-supervisor.mjs'] : [])]);
 async function startPeer(peer) {
   const child = spawn(engine, ['run', '--interactive', '--name', peer.name, ...hardening,
+    '--add-host', `broker:${brokerAddress}`,
     '--volume', `${peer.data}:/data:rw`, '--volume', `${peer.private}:/run/client:ro`, image, 'node', 'scripts/topology-client.mjs'],
   { stdio: ['pipe', 'pipe', 'pipe'] });
   children.add(child);
@@ -81,7 +95,10 @@ try {
     host: '0.0.0.0', port: 8787, tls: { certFile: '/run/broker/cert.pem', keyFile: '/run/broker/key.pem' } }), { mode: 0o600 });
   await run(['network', 'create', '--internal', network]); networkCreated = true;
   await startBroker();
-  await Promise.all(peers.map(startPeer));
+  brokerAddress = JSON.parse(await run(['inspect', broker]))[0].NetworkSettings.Networks[network].IPAddress;
+  assert.match(brokerAddress, /^\d+\.\d+\.\d+\.\d+$/);
+  await lifecycle(peers, startPeer);
+  await healthy(peers, 'initial topology');
   assert.equal(new Set(peers.map(peer => peer.identity.client_id)).size, 8);
   const inspections = JSON.parse(await run(['inspect', broker, ...peers.map(peer => peer.name)]));
   for (const item of inspections) {
@@ -118,13 +135,14 @@ try {
     for (const item of sent) assert.equal(await sender.call('observe', { message_id: item.receipt.message_id }), null);
   }
   const receivers = peers.filter(peer => peer.index === 1), originalIds = receivers.map(peer => peer.identity.client_id);
-  await Promise.all(receivers.map(peer => peer.stop()));
+  await lifecycle(receivers, peer => peer.stop());
   const offline = [];
   for (const receiver of receivers) {
     const sender = peers.find(peer => peer.type === receiver.type && peer.index === 0);
     const item = await send(sender, receiver, 'offline recipient'); offline.push(item);
     assert.equal(item.receipt.recipient_connected_at_acceptance, false);
   }
+  await healthy(peers.filter(peer => peer.index === 0), 'before broker restart');
   if (engine === 'docker') {
     await run(['kill', '--signal', 'KILL', broker]); await run(['wait', broker]);
     await run(['start', broker]);
@@ -144,9 +162,13 @@ try {
     assert.equal(after.generation, 2); assert.equal(after.previousExit, 'SIGKILL');
     assert.notEqual(after.pid, before.pid);
   }
-  await Promise.all(receivers.map(startPeer));
-  assert.deepEqual(receivers.map(peer => peer.identity.client_id), originalIds);
+  const afterAddress = JSON.parse(await run(['inspect', broker]))[0].NetworkSettings.Networks[network].IPAddress;
+  assert.equal(afterAddress, brokerAddress, 'explicit service endpoint remains unchanged');
   for (const sender of peers.filter(peer => peer.index === 0)) await sender.call('reconnect');
+  await healthy(peers.filter(peer => peer.index === 0), 'after broker restart before recipient recreation');
+  await lifecycle(receivers, startPeer);
+  assert.deepEqual(receivers.map(peer => peer.identity.client_id), originalIds);
+  await healthy(peers, 'after recipient recreation');
   await Promise.all(receivers.map(async peer => { assert.equal((await peer.call('receive')).stored, true); }));
   await Promise.all(sent.map(verify));
   for (const item of offline) {
@@ -161,14 +183,17 @@ try {
   const listing = await modelPeer.call('list');
   assert.equal(listing.clients.find(peer => peer.client_id === identity).model.id, 'after');
   assert.equal(listing.clients.length, 8);
-  await Promise.all(peers.map(peer => peer.stop()));
+  await lifecycle(peers, peer => peer.stop());
   await run(['stop', '--time', '5', broker]);
   assert.equal(await run(['inspect', '--format', '{{.State.ExitCode}}', broker]), '0');
   console.log(JSON.stringify({ result: 'passed', engine, topology: 'eight separate reference adapter containers and one TLS broker',
     directedRoutes: 16, offlineRoutes: 4, concurrentRoutes: 3, brokerCrashRecovery: true, inboxRecreation: true,
-    modelMetadataSwitch: true, publishedPorts: 0, brokerContainerRestart: engine === 'docker', brokerProcessRestart: true, rootlessNamespaceRestartCertified: false, nativeHostCertification: false, twoPhysicalHosts: false }));
+    modelMetadataSwitch: true, publishedPorts: 0, explicitPrivateHostMapping: true, brokerContainerRestart: engine === 'docker', brokerProcessRestart: true, rootlessNamespaceRestartCertified: false, nativeHostCertification: false, twoPhysicalHosts: false }));
 } finally {
-  const removed = await Promise.allSettled([broker, ...peers.map(peer => peer.name)].map(name => run(['rm', '--force', name])));
+  const removed = await lifecycle([broker, ...peers.map(peer => peer.name)], async name => {
+    try { await run(['rm', '--force', name]); return { status: 'fulfilled' }; }
+    catch (reason) { return { status: 'rejected', reason }; }
+  });
   for (const child of children) { if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL'); }
   if (networkCreated) await run(['network', 'rm', network]);
   // Removal must complete before any owned bind-mounted data is discarded.
