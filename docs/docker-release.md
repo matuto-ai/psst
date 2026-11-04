@@ -22,9 +22,15 @@ the image does not activate either setting. Keep existing authorization and volu
 no re-enrollment is required merely to upgrade the broker.
 
 For upgrades from pre-0.6.0, database schema advances to **5**. Existing 0.6.0
-databases stay at schema 5 with additive revocation timestamp columns. Verify a
-private backup before upgrading; startup
-also creates an integrity-checked private snapshot before migrating existing storage.
+databases stay at schema 5 with additive revocation timestamp columns. Before
+every upgrade, the operator must make and verify a consistent private SQLite
+backup using the documented backup procedure, not copy an active WAL database.
+Normal startup creates an integrity-checked migration snapshot only for existing
+schema versions 1–4. Approval initialization also snapshots when the approval
+table is first introduced and no pre-approval backup was already made.
+An existing 0.6.0 schema-5 database with approval tables does **not** receive a new
+automatic snapshot when 0.7.0 adds the revocation columns. Do not rely on an
+automatic snapshot for that upgrade.
 Do not open the upgraded database with an older binary. See the
 [retention rollout, migration and restore constraints](presence.md#optional-ephemeral-session-retention-registration-v2).
 Enable retention only after all native connectors have been updated and their
