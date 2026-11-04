@@ -140,3 +140,16 @@ terminal decision. Older rows without a known revocation time receive a persiste
 30-day grace period from first upgraded startup. Repeating revoke or restarting
 does not reset that period. See [retention and recovery details](approval-operator.md#revoked-authorization-retention)
 for the durable metadata, distinct denied/expired policy and rollback limits.
+
+
+### Authorization clocks
+
+Installation access displays **Authorization expires** only for an approved
+installation. Terminal grants display **Historical authorization expiry
+(inactive)**; pending, denied and never-approved expired requests display
+**No authorization granted**, without exposing their request deadline as a grant
+expiry. **Requested** remains the creation timestamp. Pending requests still
+expire after 24 hours internally and in connector status. Finite authorization
+lifetime is configured in days through the deployment environment; existing
+grants are never extended by changing it. See the
+[operator lifetime policy](approval-operator.md#configure-authorization-lifetime).
