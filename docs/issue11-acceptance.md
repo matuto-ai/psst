@@ -80,6 +80,8 @@ pending with no fabricated native receipt. The test removes/recreates recipients
 queues four offline messages, kills/restarts the broker, verifies persistent
 identities/journals/dedupe, and runs three concurrent routes. The broker container
 is killed and started again; its private service IP is required to stay unchanged.
+Podman receives an explicit IP in the new empty private subnet, since its automatic
+allocation changes on restart. Docker retains its original allocation.
 Every disposable peer has an explicit container-local `broker` host mapping to
 that address, and still verifies the TLS hostname and CA. No host routing, DNS or
 security setting is modified. An exploratory rootless dynamic-DNS run timed out

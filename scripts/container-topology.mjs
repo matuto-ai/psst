@@ -6,6 +6,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, copyFileSync, rmSync } from 'nod
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
+import { isIPv4 } from 'node:net';
 import { randomBytes, randomUUID, createHash } from 'node:crypto';
 
 const execute = promisify(execFile), engine = process.argv[2], image = process.argv[3];
@@ -25,7 +26,7 @@ const hardening = [...(engine === 'podman' ? ['--userns=keep-id'] : []), '--user
   '--read-only', '--cap-drop=ALL', '--security-opt=no-new-privileges', '--network', network, '--pull=never'];
 const children = new Set(); let networkCreated = false, brokerAddress;
 const startBroker = () => run(['run', '--detach', '--name', broker, '--network-alias', 'broker', ...hardening,
-  '--volume', `${brokerData}:/data:rw`, '--volume', `${brokerPrivate}:/run/broker:ro`, image]);
+  ...(brokerAddress ? ['--ip', brokerAddress] : []), '--volume', `${brokerData}:/data:rw`, '--volume', `${brokerPrivate}:/run/broker:ro`, image]);
 async function startPeer(peer) {
   const child = spawn(engine, ['run', '--interactive', '--name', peer.name, ...hardening,
     '--add-host', `broker:${brokerAddress}`,
@@ -80,9 +81,25 @@ try {
   writeFileSync(join(brokerPrivate, 'config.json'), JSON.stringify({ database: '/data/broker.sqlite', credential_file: '/run/broker/credentials.json',
     host: '0.0.0.0', port: 8787, tls: { certFile: '/run/broker/cert.pem', keyFile: '/run/broker/key.pem' } }), { mode: 0o600 });
   await run(['network', 'create', '--internal', network]); networkCreated = true;
+  const createdNetwork = JSON.parse(await run(['network', 'inspect', network]))[0];
+  if (engine === 'podman') {
+    // Podman reallocates an automatic address even on the same-container start.
+    // Explicitly reserve an address in this new, otherwise empty private subnet.
+    const subnet = createdNetwork.subnets?.find(entry => entry.subnet.includes('.'));
+    assert.match(subnet?.subnet ?? '', /^(\d+\.){3}\d+\/\d+$/);
+    const [base, prefixLength] = subnet.subnet.split('/'), prefix = Number(prefixLength);
+    assert.ok(isIPv4(base) && Number.isInteger(prefix) && prefix >= 1 && prefix <= 30);
+    const networkAddress = base.split('.').reduce((value, octet) => value * 256 + Number(octet), 0);
+    const size = 2 ** (32 - prefix); assert.equal(networkAddress % size, 0);
+    const address = networkAddress + 2; assert.ok(address < networkAddress + size - 1);
+    brokerAddress = [24, 16, 8, 0].map(shift => (address >>> shift) & 255).join('.');
+    assert.notEqual(brokerAddress, subnet.gateway);
+  }
   await startBroker();
+  const requestedAddress = brokerAddress;
   brokerAddress = JSON.parse(await run(['inspect', broker]))[0].NetworkSettings.Networks[network].IPAddress;
   assert.match(brokerAddress, /^\d+\.\d+\.\d+\.\d+$/);
+  if (requestedAddress) assert.equal(brokerAddress, requestedAddress);
   await Promise.all(peers.map(startPeer));
   assert.equal(new Set(peers.map(peer => peer.identity.client_id)).size, 8);
   const inspections = JSON.parse(await run(['inspect', broker, ...peers.map(peer => peer.name)]));
