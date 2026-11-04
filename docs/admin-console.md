@@ -153,3 +153,13 @@ expire after 24 hours internally and in connector status. Finite authorization
 lifetime is configured in days through the deployment environment; existing
 grants are never extended by changing it. See the
 [operator lifetime policy](approval-operator.md#configure-authorization-lifetime).
+
+### Browser tab icon (0.7.0)
+
+Login and administration pages share the Psst double-chevron favicon, matching
+the existing green brand. The font-independent SVG is served locally at
+`/admin/favicon.svg`, including before login. It is a public static asset and
+contains no session or installation data. Only GET/HEAD are supported; private
+HTML remains uncached and authenticated pages keep their existing access checks.
+The icon may be cached for one day. This is source for 0.7.0, not a published
+image or deployment.
