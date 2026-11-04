@@ -6,7 +6,7 @@ import { ApprovalService } from '../src/approval.mjs';
 import { adminClient } from '../src/admin-client.mjs';
 import { AdminUI } from '../src/admin.mjs';
 import { AdminData, ADMIN_PAGE_BYTES, publicLabel } from '../src/admin-data.mjs';
-import { createBrokerServer } from '../src/server.mjs';
+import { adminRequest } from './admin-request.mjs';
 
 const params = value => new URLSearchParams(value);
 function register(f, owner = f.a.entry, extra = {}) {
@@ -17,11 +17,10 @@ function register(f, owner = f.a.entry, extra = {}) {
 async function web(t) {
   const f = fixture(t), approval = await ApprovalService.create({ store: f.store });
   const admin = await AdminUI.create({ approval, auth: f.auth, password: 'synthetic-password-only-123456', insecureDevelopment: true });
-  const app = createBrokerServer({ store: f.store, auth: f.auth, approval, admin, host: '127.0.0.1', port: 0, insecureDevelopment: true });
-  const address = await app.listen(); t.after(() => app.close());
   const session = admin.issue(true), cookie = `psst_admin=${session.cookie}`;
-  return { ...f, approval, admin, app, session, cookie, base: `http://127.0.0.1:${address.port}`,
-    async page(path, authenticated = true) { const r = await fetch(`http://127.0.0.1:${address.port}${path}`, { headers: authenticated ? { cookie } : {} }); return { status: r.status, html: await r.text(), headers: r.headers }; } };
+  return { ...f, approval, admin, session, cookie,
+    page(path, authenticated = true) { return adminRequest(admin, path, { headers: authenticated ? { cookie } : {} }); } };
+
 }
 
 test('admin sessions distinguish same names/installation and derive lease freshness including restart', t => {
@@ -154,7 +153,7 @@ test('new read pages add no mutation routes and expired admin cookies reveal no 
   const before = f.store.db.prepare('SELECT id,closed,lease_until FROM sessions WHERE id=?').get(a.client_id);
   for (const path of ['/admin/sessions', '/admin/messages', '/admin/approvals']) await f.page(path);
   assert.deepEqual(f.store.db.prepare('SELECT id,closed,lease_until FROM sessions WHERE id=?').get(a.client_id), before);
-  const r = await fetch(f.base + '/admin/sessions', { method: 'POST', headers: { cookie: f.cookie, origin: f.base, 'Content-Type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ csrf: f.session.csrf }) });
+  const r = await adminRequest(f.admin, '/admin/sessions', { method: 'POST', headers: { cookie: f.cookie, origin: 'http://admin.test', 'content-type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ csrf: f.session.csrf }) });
   assert.equal(r.status, 404);
   f.store.db.prepare('UPDATE admin_sessions SET expires=0').run();
   const page = await f.page('/admin/sessions'); assert.match(page.html, /Administrator login/); assert.ok(!page.html.includes(a.client_id));

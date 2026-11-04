@@ -68,24 +68,23 @@ To enroll adapters later, mount a dedicated private directory containing `config
 1. Review and merge the release preparation PR. Select that exact reviewed commit for the release.
 2. Keep `package.json` version and release tag aligned: current version `0.6.0` requires tag **`v0.6.0`**. For another version, update `package.json`, test and commit it first.
 3. In GitHub, publish the release at the reviewed commit. Publishing, not merely saving a draft or pushing a tag, triggers **Release image**.
-4. The workflow runs **all** ordinary CI jobs against the immutable release event commit: full test suite, syntax, Docker, rootless Podman, copied-runtime and connectivity checks. Only after success does it build/smoke/push the Linux/amd64 image using the repository's short-lived `GITHUB_TOKEN` with `packages: write`. No registry secret setup is required for this workflow.
+4. The workflow runs syntax checks and the focused unit suite against the immutable release event commit. Only after success does it build and push the Linux/amd64 image using the repository's short-lived `GITHUB_TOKEN` with `packages: write`. No registry secret setup is required for this workflow.
 5. Stable releases publish `:VERSION` and `:latest`; prereleases publish only `:VERSION`. The run summary records pull command and image digest. Prefer a version/digest for deployment. Published version tags should not be reused for different source.
 
 GHCR's first package may initially be private even for a public repository. The operator must choose package visibility/access if anonymous `docker pull` is wanted; the workflow does not silently change it. See [GitHub Container registry authentication and visibility](https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-container-registry).
 
-**CI** runs on every push and pull request and never publishes. **Release image** runs on `release: published`; its manual action is a **build/test-only dry run** with no registry login, package write or push. No workflow creates a release/tag or deploys a server. The manual action becomes selectable once its workflow exists on the default branch. Release behavior follows [GitHub's release event semantics](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#release).
+**CI** runs on every push and pull request and never publishes. **Release image** runs on `release: published`; its manual action is a **unit-verification-only dry run** with no registry login, package write or push. No workflow creates a release/tag or deploys a server. The manual action becomes selectable once its workflow exists on the default branch. Release behavior follows [GitHub's release event semantics](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#release).
 
 The workflows are a small adaptation of the operator-supplied [Forge Desk release](https://github.com/brunoorsolon/forge-desk/blob/main/.github/workflows/release.yml) and [CI](https://github.com/brunoorsolon/forge-desk/blob/main/.github/workflows/ci.yml), not a copy of its application/matrix pipeline. Registry publication requires a published release and a successful gated workflow.
 
 ## Build before a release exists
 
 ```sh
-docker build --target test -f Containerfile -t broker-test:local .
 docker build --target runtime -f Containerfile -t broker-runtime:local .
 # Use broker-runtime:local in the docker run command above.
 ```
 
-CI additionally exercises **ordinary `-p` host-to-container connectivity**, missing/invalid credential rejection, private nonroot storage and persistence across restart. This verifies the container boundary rather than merely curling container loopback. It does not certify any particular Nginx deployment or native agent connector.
+CI does not build or launch containers. The release workflow builds the runtime image after unit verification; connectivity, proxy configuration, persistence across a real process restart and native behavior are not certified by those tests. Verify the chosen deployment separately.
 
 ## Enroll native clients after the connectivity check
 

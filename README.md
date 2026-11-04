@@ -11,11 +11,11 @@ A generic, authenticated LAN message broker for independent AI CLI sessions. It 
 
 ## Docker server
 
-Use the [Docker image / Compose and release guide](docs/docker-release.md). The server image starts without credentials for connectivity testing: HTTP port **8787**, persistent **`/data`**, public health only; every API stays denied until adapters are enrolled. Your existing HTTPS proxy and network configuration remain operator-owned. CI runs on every push/PR; a user-published GitHub Release gates image publication on the full suite. No image is published just by pushing this branch.
+Use the [Docker image / Compose and release guide](docs/docker-release.md). The server image starts without credentials for connectivity testing: HTTP port **8787**, persistent **`/data`**, public health only; every API stays denied until adapters are enrolled. Your existing HTTPS proxy and network configuration remain operator-owned. CI runs on every push/PR; a user-published GitHub Release gates image publication on syntax checks and focused unit tests. No image is published just by pushing this branch.
 
 ## Native setup
 
-Native setup asks only for the broker URL, followed by approval in the broker administration page. See [URL-only setup](docs/approval-operator.md) and the [approval contract](docs/approval-protocol.md). This flow is available since broker 0.4.0 and requires a compatible connector; it is not present in broker 0.3.0. Existing legacy bundles and ticket pairing remain compatible. Native automatic-receive acceptance is separately tested per connector.
+Native setup asks only for the broker URL, followed by approval in the broker administration page. See [URL-only setup](docs/approval-operator.md) and the [approval contract](docs/approval-protocol.md). This flow is available since broker 0.4.0 and requires a compatible connector; it is not present in broker 0.3.0. Existing legacy bundles and ticket pairing remain compatible. Native automatic-receive acceptance is separate from the unit suite.
 
 ## Optional session retention
 
@@ -58,11 +58,9 @@ Use **Node.js 24.19.0** (the tested runtime; bundled SQLite 3.53.3). No npm pack
 ```sh
 npm test
 npm run check
-npm run smoke  # actual nonroot service entrypoint, disposable fixtures
-npm run demo   # all 16 simulated family routes into durable reference inboxes
 ```
 
-The tests use isolated temporary databases and disposable test-only credentials/certificates. TLS tests require the `openssl` command. They do not configure a host, provision ongoing access, or call an LLM.
+The unit tests use isolated temporary SQLite/filesystem fixtures, fake clocks, in-memory streams and injected transports. They do not start broker servers, launch child processes, install native hosts, run browsers or containers, or call an LLM. No npm dependencies or `openssl` are required. See [the test policy](docs/verification.md).
 
 The service starts with `BROKER_CONFIG_FILE=/path/to/private/config.json npm start`. Startup fails closed without an operator-owned verifier file and explicit TLS or an explicit documented development/proxy transport mode. Every `/v1` request authenticates, even on loopback. Tokens are never tool arguments or CLI flags.
 
@@ -70,4 +68,4 @@ One broker process owns local SQLite, using WAL and FULL durability. A separate 
 
 No release, deployment, host configuration change, or production credential is included in this repository's test runs.
 
-The demo uses eight distinct session identities, real HTTP, and local durable reference journals; it performs no native CLI input or LLM calls. The optional MCP facade is local stdio/tools-only, with no Channel push, remote MCP listener, permission relay, or claimed native-host certification.
+The optional MCP facade is local stdio/tools-only, with no Channel push, remote MCP listener, permission relay, or claimed native-host certification.

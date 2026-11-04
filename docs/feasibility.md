@@ -1,5 +1,7 @@
 # Compatibility evidence and release gates
 
+**Scope note (2026-11-04):** this feasibility/reference material retains historical host observations. Its old probes are archived links, not current CI requirements. The automated suite is now [focused unit verification](verification.md); live-host verification is purpose-specific when requested.
+
 ## What this record establishes
 
 The broker owns authenticated transport, registry state and durable message delivery.
@@ -33,7 +35,7 @@ version and local provider conditions.
 | OpenCode **2.2.5** libraries/plugin API | Official loader/CodeMode integration, packed root plugin and real container recreation; fixture-based synthetic admission/context proof and durable offline-notice recovery. | The cited CI run skips three optional official CLI cases: packed native-plugin automatic admission, URL-only native setup, and native plugin-manager installation. Interactive TUI/authenticated-model notice acceptance is not established by the library/API fixtures. |
 
 The [verification snapshot](verification.md#connector-qualification) links each
-source revision and CI run. The older [Pi 1.4 probe](probes/pi-1.4/README.md)
+source revision and CI run. The older [Pi 1.4 probe](https://github.com/matuto-ai/psst/blob/2d766b72edd9ed34f21cb93893a737aea0721f21/docs/probes/pi-1.4/README.md)
 remains a historical archive: its Antigravity child was synthetic and its void
 native API left the item pending. That result does not describe every later Pi
 connector path.

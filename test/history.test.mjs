@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { fixture, httpFixture, registration, sendBody, uuid } from './helpers.mjs';
+import { fixture, registration, sendBody, uuid } from './helpers.mjs';
 const code=(fn,c)=>assert.throws(fn,e=>e.code===c);
 function pair(f){const a=registration(),b=registration();f.store.register(f.a.entry,a);f.store.register(f.b.entry,b);return [a,b];}
 function send(f,a,b,n=1){return Array.from({length:n},(_,i)=>f.store.send(f.a.entry,a.client_id,1,uuid(),sendBody(b.client_id,`private body ${i}`)));}
@@ -50,21 +50,6 @@ test('sparse authorized history scans bounded candidates and continues through e
  const page=f.store.history(f.a.entry,a.client_id,{status:'delivered'});assert.deepEqual(page.messages,[]);assert.ok(page.next_cursor);
  const final=f.store.history(f.a.entry,a.client_id,{status:'delivered',cursor:page.next_cursor});assert.deepEqual(final.messages,[]);assert.equal(final.next_cursor,null);
 });
-
-test('content preserves original bytes and receipt-only route, retention/purge/restart do not reconstruct',async t=>{
- const f=await httpFixture(t),[a,b]=pair(f),text='opaque\n🧪 <script>private</script>\u001b[31m';
- const sent=f.store.send(f.a.entry,a.client_id,1,uuid(),sendBody(b.client_id,text,{ttl_seconds:60}));
- const list=await f.request('/v1/messages',{session:a.client_id});assert.equal(list.status,200);assert.ok(!JSON.stringify(list.body).includes('private'));
- const detail=await f.request(`/v1/messages/${sent.message_id}/content`,{session:a.client_id});assert.equal(detail.status,200);assert.equal(detail.body.envelope.content.text,text);
- const receipt=await f.request(sent.status_url,{session:a.client_id});assert.equal(receipt.status,200);assert.ok(!('envelope'in receipt.body));
- assert.equal((await f.request('/v1/messages?limit=10&limit=11',{session:a.client_id})).status,400);
- assert.equal((await f.request(`/v1/messages/${sent.message_id}/content`,{session:b.client_id,token:f.b.token})).status,404);
- f.advance(60001);assert.equal(f.store.messageContent(f.a.entry,a.client_id,sent.message_id).delivery_state,'expired');
- assert.equal(f.store.messageContent(f.a.entry,a.client_id,sent.message_id).envelope.content.text,text);
- f.store.db.prepare('UPDATE messages SET envelope=NULL WHERE id=?').run(sent.message_id);code(()=>f.store.messageContent(f.a.entry,a.client_id,sent.message_id),'content_unavailable');
- f.advance(8*86400000);f.store.sweep();code(()=>f.store.messageContent(f.a.entry,a.client_id,sent.message_id),'message_not_found');
-});
-
 
 test('busy unfiltered paging remains usable while receipt states change; purge is explicit and cannot admit reused row IDs',t=>{
  const f=fixture(t,{limits:{send_burst:100}}),[a,b]=pair(f),sent=send(f,a,b,15);

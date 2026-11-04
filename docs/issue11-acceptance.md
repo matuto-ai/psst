@@ -1,5 +1,7 @@
 # Packaging, recovery and compatibility acceptance
 
+**Historical record:** this describes the exact pre-cleanup commits and runs below. The integration/native/container harnesses and mandatory gates were removed in issue #51. See [current unit verification](verification.md). Past evidence is not a claim about the current suite.
+
 This ledger maps the original [issue #11](https://github.com/matuto-ai/psst/issues/11)
 requirements to the integrated implementation. It reuses #45's current packed
 cohort and #46's native Pi lifecycle coverage. It does not release or deploy.
@@ -23,7 +25,7 @@ native input/lifecycle behavior. Retain that boundary and the actual acceptance
 cases. A synthetic host API is not an official-host run. Publication, a vendor
 account run and user deployment are separate observations, not new prerequisites.
 
-The continuing [native Pi-to-Pi safety test](native-pi-matrix.md) uses two official
+The continuing [native Pi-to-Pi safety test](https://github.com/matuto-ai/psst/blob/2d766b72edd9ed34f21cb93893a737aea0721f21/docs/native-pi-matrix.md) uses two official
 Pi 1.4.0 processes and the packed merged connector at `5f070a992e43502c7647759fa93b3eb926ffef5b`.
 It adds real native tool-send/provider-input checks for busy arrival, an intact
 human draft, and model selection while abort-paused mail remains pending. It is

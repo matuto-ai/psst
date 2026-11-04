@@ -18,10 +18,9 @@ node --version
 node --input-type=module -e "import {DatabaseSync} from 'node:sqlite'; const db=new DatabaseSync(':memory:'); console.log(db.prepare('SELECT sqlite_version() AS sqlite').get()); db.close()"
 npm run check
 npm test
-node scripts/container-smoke.mjs
 ```
 
-No global Node upgrade is needed: an isolated, reviewed container/runtime is preferred if the host uses another version. `npm run check` is a JavaScript syntax check, **not a TypeScript type-check**. The smoke script starts the actual entrypoint as nonroot using isolated disposable test credentials, checks minimal readiness/auth, and removes its fixture directory. It is not a real LAN or CLI integration test.
+No global Node upgrade is needed: an isolated, reviewed container/runtime is preferred if the host uses another version. `npm run check` is a JavaScript syntax check, **not a TypeScript type-check**. The current automated suite is unit-only; see [verification scope](verification.md).
 
 ## Private operator configuration
 
@@ -74,14 +73,13 @@ Agent transport does not use CORS/browser sessions or OAuth. The separate admin 
 
 ## Container review and rootless Podman example
 
-`Containerfile` has a full official Node test stage (including the `openssl` test command) and a slim nonroot runtime stage. Both pin Node 24.19.0 and official immutable image digests resolved in the recorded CI run; the build also checks SQLite 3.53.3. Review the selected architecture and rerun the full suite before deliberately updating those pins. No registry image is pushed by CI.
+`Containerfile` contains a slim nonroot runtime, pinned to Node 24.19.0 and an official immutable image digest; the build also checks SQLite 3.53.3. The integration-test image stage has been removed. Review the selected architecture and rerun the full suite before deliberately updating those pins. No registry image is pushed by CI.
 
 ```sh
-podman build --target test -f Containerfile -t localhost/ai-agent-msg-broker-test:reviewed .
 podman build --target runtime -f Containerfile -t localhost/ai-agent-msg-broker:reviewed .
 ```
 
-The task's cloud executor had neither Podman nor Docker, so these commands were **not locally run**. The GitHub workflow passed Docker build/test and a nonroot entrypoint smoke, plus an actual **rootless Podman 4.9.3 on Ubuntu 24.04** private-volume/restart smoke. See [exact-commit evidence](verification.md#rootless-podman-ci). The Podman job uses the runner's existing unprivileged setup, never sudo, installation, host-security changes, published ports or real credentials. Fedora SELinux/Quadlet and two-host LAN behavior remain unverified.
+These are operator examples, not commands executed by unit CI. Review and verify the selected container runtime and host separately; unit success does not certify Fedora SELinux/Quadlet or LAN behavior.
 
 After independent review/provisioning, an operator can adapt:
 
@@ -130,10 +128,10 @@ The destination directory must already be private (`0700`) and operator-owned; t
 
 For restore, stop the broker and all replacement writers, preserve the existing directory for rollback, verify the snapshot in a separate private local directory, and start the same reviewed runtime against that new path. Do not combine a restored database with stale `-wal`/`-shm` files from another database. The ownership sidecar is coordination, not mailbox data; a fresh sidecar belongs to the new restored path. Startup expires all old live leases and requeues unconfirmed claims without erasing uncertainty. Adapters must reconnect with their durable identity/journal before resuming. A broker snapshot does **not** back up adapter-local inbox/deduplication journals; back those up separately with their own SQLite-safe procedure and exact-session lifetime checks.
 
-Schema version 1 is the initial migration; version 2 adds per-claim prior-uncertainty tracking so a definitive negative ACK resolves only its own attempt. Version 3 adds pairing, version 4 approval/admin state, and version 5 session-retention/registration control. The current entrypoint preserves a private pre-migration snapshot before changing older databases. A higher unknown schema fails startup; there is no automatic downgrade. Before a future migration, create and restore-test a snapshot and rerun recovery tests. The [integrated recovery check](issue11-acceptance.md#real-upgrade-and-independent-restore) runs an actual immutable old entrypoint, upgrades its database and independently restores its online snapshot with four local journals. It does not replace a production recovery drill on the chosen disk and container topology.
+Schema version 1 is the initial migration; version 2 adds per-claim prior-uncertainty tracking so a definitive negative ACK resolves only its own attempt. Version 3 adds pairing, version 4 approval/admin state, and version 5 session-retention/registration control. The current entrypoint preserves a private pre-migration snapshot before changing older databases. A higher unknown schema fails startup; there is no automatic downgrade. Before a future migration, create and restore-test a snapshot and rerun recovery tests. The [historical integrated recovery record](issue11-acceptance.md#real-upgrade-and-independent-restore) describes a removed harness at its recorded commit. The retained local storage/backup tests do not replace a recovery drill on the chosen disk and container topology.
 
 For coordinated restore, quiesce new work and retain matching broker and adapter-journal recovery points. Restore into new private directories and preserve originals for rollback. Do not reset identities, erase unknown operations or transfer a journal to a different native conversation to force reconnect. A snapshot predating a later attachment can disagree with the current adapter connection identity; that mismatch requires reconciliation, not silently stealing an attachment. Keep unknown final-hop effects unknown until a supported native receipt or operator recovery resolves them.
 
 Protocol overrides may narrow the wire limits, not enlarge them. Retention must remain at least seven days, registration retry records at least 24 hours, and the lease at least three heartbeat intervals. Database directories must be private (0700) and operator-owned. Scope/type reductions in the verifier file fence affected leases and remove former-scope discovery/send access; a reload never silently grants an existing session new scopes.
 
-Docker and Podman have matching `.dockerignore`/`.containerignore` rules. Keep real config, verifiers, tokens, TLS keys, databases and backups outside the checkout/build context regardless; ignore rules are a second layer, not a secret-management system. Exact-code Docker and bounded Ubuntu rootless Podman CI passed; see [recorded CI evidence](verification.md#recorded-ci-evidence) for commit/run links.
+Docker and Podman have matching `.dockerignore`/`.containerignore` rules. Keep real config, verifiers, tokens, TLS keys, databases and backups outside the checkout/build context regardless; ignore rules are a second layer, not a secret-management system. Current CI is unit-only; [verification](verification.md) explains its scope and the historical evidence boundary.

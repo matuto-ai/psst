@@ -104,20 +104,9 @@ resends/cancels mail, closes sessions or changes credentials.
 
 ## Verification boundaries
 
-`test/presence.test.mjs` and `test/presence-acceptance.test.mjs` use cheap fake-clock
-storage tests and actual HTTP for lease/grace thresholds, ownership/scopes,
-independent affected senders, repeated polling/ACK, restart/reconnect,
-uncertain claims, completion/cancellation/expiry, pagination/sample/byte/capacity
-bounds and lost-response recovery. See [the acceptance record](presence-acceptance.md)
-for the criterion-by-criterion mapping and exact evidence limits.
+`test/presence.test.mjs` and `test/presence-acceptance.test.mjs` are focused fake-clock storage tests. They cover lease/grace thresholds, ownership/scopes, independent affected senders, polling/ACK, local reopen/reconnect, uncertain claims, cancellation/expiry and bounded pagination. Runtime stop behavior uses injected clients. No live broker, native host or process-lifecycle test runs in CI.
 
-The [actual Pi regression](native-pi-presence.md) runs official CLI processes in
-PTYs with a local provider, independently measures process death and lease
-freshness, and preserves inbox/queued mail through reload, exit, crash and exact
-native-session resume. The current packed four-connector matrix separately checks
-native-tool serialized discovery fields and prompt resumable shutdown using
-synthetic host boundaries. Neither evidence claims authenticated vendor-model
-behavior, a full four-host native compatibility matrix or a deployment.
+The [earlier acceptance record](presence-acceptance.md) is historical evidence for its recorded commits. Current unit success is not real native-process, TLS or deployment acceptance. See [the test policy](verification.md).
 
 ## Optional ephemeral-session retention (registration v2)
 

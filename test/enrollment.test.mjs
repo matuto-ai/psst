@@ -1,11 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync, readFileSync, writeFileSync, statSync, chmodSync, symlinkSync, mkdirSync, existsSync, readdirSync } from 'node:fs';
+import { mkdtempSync, rmSync, readFileSync, writeFileSync, statSync, symlinkSync, mkdirSync, existsSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { enrollClients, validateEnrollment, parseArguments, CLIENT_TYPES } from '../scripts/enroll-clients.mjs';
+import { enrollClients, parseArguments, CLIENT_TYPES } from '../scripts/enroll-clients.mjs';
 import { CredentialStore } from '../src/auth.mjs';
 import { BrokerStore } from '../src/store.mjs';
 import { registration, sendBody } from './helpers.mjs';
@@ -106,22 +105,6 @@ test('public parents and symlink parents/destinations are refused without chmod 
   symlinkSync(join(f.parent, 'absent'), f.directory);
   assert.throws(() => enrollClients(f), /destination_already_exists/);
   assert.ok(!existsSync(join(f.parent, 'absent')));
-});
-
-test('CLI emits only a fixed summary, no secrets or endpoint, and does not overwrite on retry', t => {
-  const f = fixture(t);
-  const args = ['scripts/enroll-clients.mjs', '--directory', f.directory, '--broker-url', f.brokerUrl, '--create-credentials'];
-  const first = spawnSync(process.execPath, args, { encoding: 'utf8' });
-  assert.equal(first.status, 0, first.stderr);
-  assert.equal(first.stdout, 'Created four private client bundles and staged broker configuration. Nothing was deployed.\n');
-  assert.equal(first.stderr, '');
-  assert.ok(!first.stdout.includes(f.brokerUrl));
-  const token = readFileSync(join(f.directory, 'clients/pi/token'), 'utf8').trim();
-  assert.ok(!first.stdout.includes(token));
-  const second = spawnSync(process.execPath, args, { encoding: 'utf8' });
-  assert.equal(second.status, 1);
-  assert.equal(second.stderr, 'destination_already_exists\n');
-  assert.equal(readFileSync(join(f.directory, 'clients/pi/token'), 'utf8').trim(), token);
 });
 
 test('argument parser rejects unknown, missing and repeated flags', () => {
