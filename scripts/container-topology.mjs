@@ -23,11 +23,12 @@ const peers = types.flatMap(type => [0, 1].map(index => ({ type, index, name: `$
   data: join(directory, `${type}-${index}-data`), private: join(directory, `${type}-${index}-private`) })));
 const hardening = [...(engine === 'podman' ? ['--userns=keep-id'] : []), '--user', `${uid}:${gid}`,
   '--read-only', '--cap-drop=ALL', '--security-opt=no-new-privileges', '--network', network, '--pull=never'];
-const children = new Set(); let networkCreated = false;
+const children = new Set(); let networkCreated = false, brokerAddress;
 const startBroker = () => run(['run', '--detach', '--name', broker, '--network-alias', 'broker', ...hardening,
   '--volume', `${brokerData}:/data:rw`, '--volume', `${brokerPrivate}:/run/broker:ro`, image]);
 async function startPeer(peer) {
   const child = spawn(engine, ['run', '--interactive', '--name', peer.name, ...hardening,
+    '--add-host', `broker:${brokerAddress}`,
     '--volume', `${peer.data}:/data:rw`, '--volume', `${peer.private}:/run/client:ro`, image, 'node', 'scripts/topology-client.mjs'],
   { stdio: ['pipe', 'pipe', 'pipe'] });
   children.add(child);
@@ -79,7 +80,10 @@ try {
   writeFileSync(join(brokerPrivate, 'config.json'), JSON.stringify({ database: '/data/broker.sqlite', credential_file: '/run/broker/credentials.json',
     host: '0.0.0.0', port: 8787, tls: { certFile: '/run/broker/cert.pem', keyFile: '/run/broker/key.pem' } }), { mode: 0o600 });
   await run(['network', 'create', '--internal', network]); networkCreated = true;
-  await startBroker(); await Promise.all(peers.map(startPeer));
+  await startBroker();
+  brokerAddress = JSON.parse(await run(['inspect', broker]))[0].NetworkSettings.Networks[network].IPAddress;
+  assert.match(brokerAddress, /^\d+\.\d+\.\d+\.\d+$/);
+  await Promise.all(peers.map(startPeer));
   assert.equal(new Set(peers.map(peer => peer.identity.client_id)).size, 8);
   const inspections = JSON.parse(await run(['inspect', broker, ...peers.map(peer => peer.name)]));
   for (const item of inspections) {
@@ -123,12 +127,15 @@ try {
     const item = await send(sender, receiver, 'offline recipient'); offline.push(item);
     assert.equal(item.receipt.recipient_connected_at_acceptance, false);
   }
-  // Crash the actual broker process, retaining its container network identity.
-  // Recipient containers are independently removed and recreated. Replacing a
-  // rootless broker network namespace while old peers stay live is a separate
-  // network failover case, not implied by this restart proof.
+  // Crash and restart the actual broker container. Its explicitly selected
+  // private address must remain stable. Container-local host mappings avoid the
+  // observed Podman dynamic-resolver outage without weakening TLS or changing
+  // host networking. Recipient containers are independently recreated.
   await run(['kill', '--signal', 'KILL', broker]); await run(['wait', broker]);
-  await run(['start', broker]); await Promise.all(receivers.map(startPeer));
+  await run(['start', broker]);
+  const restartedAddress = JSON.parse(await run(['inspect', broker]))[0].NetworkSettings.Networks[network].IPAddress;
+  assert.equal(restartedAddress, brokerAddress, 'explicit private broker service address survives container restart');
+  await Promise.all(receivers.map(startPeer));
   assert.deepEqual(receivers.map(peer => peer.identity.client_id), originalIds);
   for (const sender of peers.filter(peer => peer.index === 0)) await sender.call('reconnect');
   await Promise.all(receivers.map(async peer => { assert.equal((await peer.call('receive')).stored, true); }));
@@ -150,7 +157,7 @@ try {
   assert.equal(await run(['inspect', '--format', '{{.State.ExitCode}}', broker]), '0');
   console.log(JSON.stringify({ result: 'passed', engine, topology: 'eight separate reference adapter containers and one TLS broker',
     directedRoutes: 16, offlineRoutes: 4, concurrentRoutes: 3, brokerCrashRecovery: true, inboxRecreation: true,
-    modelMetadataSwitch: true, publishedPorts: 0, brokerContainerNetworkIdentityRetained: true, nativeHostCertification: false, twoPhysicalHosts: false }));
+    modelMetadataSwitch: true, publishedPorts: 0, brokerContainerRestart: true, explicitPrivateHostMapping: true, nativeHostCertification: false, twoPhysicalHosts: false }));
 } finally {
   const removed = await Promise.allSettled([broker, ...peers.map(peer => peer.name)].map(name => run(['rm', '--force', name])));
   for (const child of children) { if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL'); }
