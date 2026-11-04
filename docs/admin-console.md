@@ -129,3 +129,14 @@ Uncertainty is displayed explicitly and must not be treated as non-delivery.
 Admin projection, sorting, filtering, pagination, escaping, private-data exclusion and theme rules have focused local tests. Admin page and authentication tests call the handler with in-memory request/response doubles; they preserve CSRF/origin checks, session rotation/expiry and response security headers without opening a server.
 
 The browser smoke/preview harnesses were removed. Unit results do not certify browser interactions, responsive layout or a deployed admin site. See [verification](verification.md).
+
+
+### Revoked installation visibility
+
+The Approvals & access list hides revoked installations on the first refresh at
+or after 30 days from their first revocation. This is not deletion or renewal:
+revoked keys still cannot connect, and old setup requests still receive their
+terminal decision. Older rows without a known revocation time receive a persisted
+30-day grace period from first upgraded startup. Repeating revoke or restarting
+does not reset that period. See [retention and recovery details](approval-operator.md#revoked-authorization-retention)
+for the durable metadata, distinct denied/expired policy and rollback limits.
