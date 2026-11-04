@@ -26,9 +26,9 @@ registry redirect or deprecation deadline is introduced.
 | Docker examples | container `ai-agent-msg-broker`, volume `ai-agent-msg-broker-data` | Retained examples. These are not necessarily the same volume as a Compose installation. |
 | Runtime data/configuration paths | `/data/broker.sqlite`, `/run/broker/config.json`, `/run/broker/credentials.json` | Retained. Preserve mounts, ownership and private-file permissions. |
 | Existing configuration variables | `BROKER_CONFIG_FILE`, `BROKER_IMAGE`, `BROKER_BIND_IP`, `BROKER_PORT` | Retained without aliases or changed precedence. Host-port choice is independent of branding. |
-| Admin and test variables | `PSST_ADMIN_PASSWORD`, `PSST_PUBLIC_ORIGIN`, `PSST_MATRIX_SOURCES`; lab output `BROKER_URL` | Retained; no secret, URL or CI-interface migration. |
+| Admin and test variables | `PSST_ADMIN_PASSWORD`, `PSST_PUBLIC_ORIGIN`; lab output `BROKER_URL` | Retained; no secret or URL migration. Obsolete matrix-only variables were removed. |
 | Local build/test image names | `localhost/ai-agent-msg-broker:reviewed`, `localhost/ai-agent-msg-broker-test:reviewed` | Retained development identifiers; not a claim about published images. |
-| Connector references | `integration/connector-matrix.test.mjs`, `cooperative-transport` in `.github/workflows/verify.yaml`, vendored SDK pins in connector repositories | Independently versioned. Retain immutable source pins and installed package/config names until that connector's tested migration explicitly replaces them. |
+| Connector references | Vendored SDK pins in connector repositories | Independently versioned. Keep installed package/config names stable; cross-repository test matrices were removed in #51. |
 | Protocol and identity | `/v1` routes, client types, session UUIDs, ownership/epochs, envelopes, adapter journals | Not branding. No change, regeneration, mailbox move or credential re-enrollment. |
 
 The current matrix retains the reviewed `matuto-ai/pi-broker-connector`,
@@ -116,7 +116,6 @@ to make a failed migration appear successful.
 
 Focused branding tests assert display labels, retained package/config/storage
 identifiers, historical release-plan support and the documentation's continuity
-and rollback constraints. Existing container/Compose, persistence, migration,
-backup and connector-matrix CI remain required. Source tests do not prove that a
+and rollback constraints. Current CI runs focused unit checks, including local persistence, migration and backup tests; container and connector matrices were removed. Source tests do not prove that a
 historical registry tag is reachable or that an operator's deployment upgraded.
 No new aliases are shipped, so no alias-installation success is claimed.

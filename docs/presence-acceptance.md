@@ -1,5 +1,7 @@
 # Issue #29 acceptance evidence
 
+**Historical record:** this describes the exact pre-cleanup commits and runs below. The integration/native/container harnesses and mandatory gates were removed in issue #51. See [current unit verification](verification.md). Past evidence is not a claim about the current suite.
+
 This record maps the original [presence/discovery issue](https://github.com/matuto-ai/psst/issues/29)
 to implementation and executable checks. It does not turn this issue into the
 broader native compatibility or deployment matrix in #11. The broker describes

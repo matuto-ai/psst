@@ -1,5 +1,7 @@
 # Host broker HTTPS for separate Podman sandboxes: connectivity first
 
+This optional operator procedure is not part of automated testing. Its existing local image name can be built with `podman build --target runtime -f Containerfile -t localhost/ai-agent-msg-broker-test:reviewed .`; the name is only a local compatibility alias, not a test image stage.
+
 A container's `127.0.0.1` is not the host. The broker's insecure-development HTTP
 mode intentionally cannot be exposed beyond loopback. This helper starts **only
 the host HTTPS broker**; it does not launch/configure clients or change existing
@@ -113,11 +115,7 @@ has separate host-loopback behavior, disabled by default. Host aliases may also
 be absent or customized. A wildcard listener does not fix DNS, routing or a
 firewall. This helper never switches backends or enables host-loopback access.
 
-CI tests one explicit route: Ubuntu's existing rootless Podman/slirp container
-connects to an already assigned host interface, with a DNS mapping added **only
-to that disposable test container**. That is not proof of every pasta version,
-Fedora SELinux policy, existing sandbox topology or two-host LAN. A failed real
-route needs review before any bounded network/firewall change is proposed.
+Current CI is unit-only and does not exercise this route. Review the selected backend, host alias and assigned interface directly when using this operator helper. A failed real route needs review before any bounded network/firewall change is proposed.
 
 ## Later: client configuration, not part of the first prompt
 

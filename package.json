@@ -10,9 +10,7 @@
   "scripts": {
     "test": "node --test test/*.test.mjs",
     "check": "node scripts/check.mjs",
-    "start": "node src/main.mjs",
-    "smoke": "node scripts/container-smoke.mjs",
-    "demo": "node --test test/matrix.test.mjs"
+    "start": "node src/main.mjs"
   },
   "license": "MIT"
 }

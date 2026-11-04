@@ -1,5 +1,7 @@
 # Start only the broker; keep your existing clients
 
+This optional operator procedure is not part of automated testing. Its existing local image name can be built with `podman build --target runtime -f Containerfile -t localhost/ai-agent-msg-broker-test:reviewed .`; the name is only a local compatibility alias, not a test image stage.
+
 For clients in separate Podman sandboxes, use [host HTTPS connectivity first](podman-host-https-test.md) instead. This page is only for clients sharing the host network namespace.
 
 This command starts **only the broker**. It does not find or launch Claude, clone
@@ -108,6 +110,6 @@ before removal. Never delete an existing client inbox or unrelated checkout.
 The old optional new-session script evaluated `claude_binary=$(command -v claude)`
 under `set -e` **before its first progress message**. An isolated reproduction with
 working prerequisite stubs and no `claude` executable exited 1 with empty stdout
-and stderr. That defect is now regression-tested and reports the broker-only
+and stderr. The startup diagnostic reports the broker-only
 command instead. This reproduces a concrete failure path; it does not claim to
 have inspected the user's computer or proved every possible cause there.

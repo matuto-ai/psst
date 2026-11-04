@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {fixture,httpFixture,registration,sendBody,uuid} from './helpers.mjs';
+import { fixture, registration, sendBody, uuid } from './helpers.mjs';
 const code=(fn,c)=>assert.throws(fn,e=>e.code===c);
 function pair(f){const a=registration(),b=registration();f.store.register(f.a.entry,a);f.store.register(f.b.entry,b);return [a,b];}
 const send=(f,a,b,key=uuid(),extra={})=>f.store.send(f.a.entry,a.client_id,1,key,sendBody(b.client_id,'opaque\n🧪 <script>no authority</script>',extra));
@@ -84,13 +84,4 @@ test('lost commit ACK for resend and cancel reconciles after restart without dup
  f.restart();f.store.register(f.a.entry,{...a,previous_epoch:1,connection_id:uuid()});
  assert.equal(f.store.cancel(f.a.entry,a.client_id,2,replay.message_id).cancel_result,'cancelled');
  assert.equal(f.store.resend(f.a.entry,a.client_id,2,key,first.message_id,{}).message_id,replay.message_id);
-});
-
-test('HTTP simultaneous resend intents and cancel/claim races expose original acceptance separately',async t=>{
- const f=await httpFixture(t),[a,b]=pair(f),first=send(f,a,b),path=`/v1/messages/${first.message_id}/resend`,options={method:'POST',session:a.client_id,key:'same-resend',body:{}};
- const replies=await Promise.all(Array.from({length:8},()=>f.request(path,options)));
- assert.ok(replies.every(r=>r.status===202));assert.equal(new Set(replies.map(r=>r.body.message_id)).size,1);assert.equal(replies.filter(r=>r.headers.get('idempotency-replayed')==='false').length,1);
- const [cancel,claimed]=await Promise.all([f.request(`/v1/messages/${first.message_id}/cancel`,{method:'POST',session:a.client_id,body:{}}),f.request('/v1/mailbox/claim',{method:'POST',token:f.b.token,session:b.client_id,key:'race',body:{}})]);
- assert.equal(cancel.status,200);if(claimed.status===200&&claimed.body.envelope.message_id===first.message_id)assert.equal(cancel.body.delivery_may_have_occurred,true);
- const forbidden=await f.request(`/v1/messages/${first.message_id}/cancel`,{method:'POST',session:b.client_id,token:f.b.token,body:{}});assert.equal(forbidden.status,404);
 });

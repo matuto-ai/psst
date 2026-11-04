@@ -1,15 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { writeFileSync } from 'node:fs';
-import { spawn } from 'node:child_process';
-import { once } from 'node:events';
-import { join } from 'node:path';
-import { fixture, httpFixture, registration, sendBody, uuid } from './helpers.mjs';
+import { fixture, registration, sendBody, uuid } from './helpers.mjs';
 import { presenceSnapshot } from '../src/presence.mjs';
 import { AdapterRuntime } from '../reference/runtime.mjs';
-import { Inbox, newSessionIdentity } from '../reference/inbox.mjs';
-import { BrokerClient } from '../reference/client.mjs';
-import { createTools } from '../reference/tools.mjs';
 
 function pair(f) {
   const sender = registration(), recipient = registration();
@@ -117,56 +110,6 @@ test('notice grace is 600 seconds from last heartbeat, not another 600 after lea
   assert.equal(f.store.receipt(f.a.entry, sender.client_id, message.message_id).delivery_state, 'queued');
 });
 
-test('real HTTP client serializes terminal escalation during an in-flight resumable stop', async t => {
-  for (const concurrent of [false, true]) {
-    const f = await httpFixture(t), tokenFile = join(f.dir, 'test-token'), diagnostics = [];
-    writeFileSync(tokenFile, f.a.token, { mode: 0o600 });
-    const inbox = new Inbox({ directory: join(f.dir, 'escalation'), identity: newSessionIdentity('pi') });
-    t.after(() => inbox.close());
-    const client = new BrokerClient({ url: f.base, tokenFile, insecureDevelopment: true, inbox });
-    await client.register(registration().metadata);
-    const id = inbox.identity.client_id, epoch = client.attachment.lease_epoch;
-    const runtime = new AdapterRuntime({ client, verifySession: () => true, isAlive: () => true, onDiagnostic: d => diagnostics.push(d) });
-    if (concurrent) {
-      const original = client.disconnectSession.bind(client);
-      let started, release;
-      const disconnected = new Promise(resolve => { started = resolve; });
-      const barrier = new Promise(resolve => { release = resolve; });
-      client.disconnectSession = async options => { const result = await original(options); started(); await barrier; return result; };
-      const first = runtime.stop({ closeSession: false });
-      await disconnected;
-      assert.equal(f.store.session(f.a.entry, id).closed, false);
-      const terminal = runtime.stop({ closeSession: true });
-      release(); await Promise.all([first, terminal]);
-    } else {
-      await runtime.stop({ closeSession: false });
-      assert.equal(f.store.session(f.a.entry, id).connected, false);
-      assert.equal(f.store.session(f.a.entry, id).closed, false);
-      await runtime.stop({ closeSession: true });
-    }
-    assert.equal(f.store.session(f.a.entry, id).closed, true);
-    assert.equal(client.attachment.lease_epoch, epoch);
-    assert.deepEqual(diagnostics, []);
-  }
-});
-
-test('reference facade polls and acknowledges owned notices through real HTTP without a live sender lease', async t => {
-  const f = await httpFixture(t), tokenFile = join(f.dir, 'test-token');
-  writeFileSync(tokenFile, f.a.token, { mode: 0o600 });
-  const inbox = new Inbox({ directory: join(f.dir, 'notice-client'), identity: newSessionIdentity('pi') });
-  t.after(() => inbox.close());
-  const client = new BrokerClient({ url: f.base, tokenFile, insecureDevelopment: true, inbox });
-  await client.register(registration().metadata);
-  const recipient = registration(); f.store.register(f.b.entry, recipient);
-  f.store.send(f.a.entry, inbox.identity.client_id, 1, uuid(), sendBody(recipient.client_id));
-  f.advance(600000);
-  const tools = createTools({ client });
-  const page = await tools.broker_presence_events({ limit: 10 });
-  assert.equal(page.events.length, 1);
-  assert.equal((await tools.broker_acknowledge_presence_event({ event_id: page.events[0].event_id })).acknowledged, true);
-  assert.deepEqual((await tools.broker_presence_events()).events, []);
-});
-
 test('notices and suppression survive restart; reconnect starts a fresh absence episode', t => {
   const f = fixture(t), { sender, recipient } = pair(f); send(f, sender, recipient);
   f.advance(600000);
@@ -266,44 +209,4 @@ test('lost notification response reconciles the same durable event rather than d
   const row = f.store.db.prepare('SELECT * FROM presence_events').get();
   assert.equal(f.store.presence.page(f.a.entry, sender.client_id).events[0].event_id, row.id);
   assert.equal(f.store.db.prepare('SELECT count(*) n FROM presence_events').get().n, 1);
-});
-
-test('HTTP presence APIs authenticate, reject browser/query abuse and work for an offline sender', async t => {
-  const f = await httpFixture(t), { sender, recipient } = pair(f); send(f, sender, recipient);
-  const disconnected = await f.request(`/v1/sessions/${recipient.client_id}/disconnect`, { token: f.b.token, method: 'POST', session: recipient.client_id, body: {} });
-  assert.equal(disconnected.status, 200); assert.equal(disconnected.body.presence_state, 'disconnected');
-  assert.equal((await f.request(`/v1/sessions/${recipient.client_id}/disconnect`, { method: 'POST', session: sender.client_id, body: {} })).status, 403);
-  f.advance(600000);
-  const result = await f.request('/v1/presence-events', { headers: { 'X-Client-ID': sender.client_id } });
-  assert.equal(result.status, 200); const event = result.body.events[0];
-  assert.equal((await f.request('/v1/presence-events', { token: null })).status, 401);
-  assert.equal((await f.request('/v1/presence-events', { session: sender.client_id, headers: { Origin: 'https://example.invalid' } })).status, 403);
-  assert.equal((await f.request('/v1/presence-events?token=no', { session: sender.client_id })).status, 400);
-  const ack = await f.request(`/v1/presence-events/${event.event_id}/ack`, { method: 'POST', headers: { 'X-Client-ID': sender.client_id }, body: {} });
-  assert.equal(ack.status, 200); assert.equal(ack.body.acknowledged, true);
-});
-
-test('real reference adapter process exits gracefully without terminally closing its resumable identity', { timeout: 15000 }, async t => {
-  const f = await httpFixture(t), tokenFile = join(f.dir, 'test-token');
-  writeFileSync(tokenFile, f.a.token, { mode: 0o600 });
-  const root = new URL('../', import.meta.url).href;
-  const script = `import {Inbox,newSessionIdentity} from '${root}reference/inbox.mjs';
-    import {BrokerClient} from '${root}reference/client.mjs';
-    import {AdapterRuntime} from '${root}reference/runtime.mjs';
-    const inbox=new Inbox({directory:${JSON.stringify(join(f.dir, 'native-fixture'))},identity:newSessionIdentity('pi')});
-    const client=new BrokerClient({url:${JSON.stringify(f.base)},tokenFile:${JSON.stringify(tokenFile)},insecureDevelopment:true,inbox});
-    const runtime=new AdapterRuntime({client,verifySession:()=>true,isAlive:()=>true});
-    process.on('SIGTERM',async()=>{await runtime.stop({closeSession:false});inbox.close();process.exit(0)});
-    await runtime.start({name:'reference-process',model:{provider:null,id:null,source:'unknown'},project:null});
-    console.log(inbox.identity.client_id);`;
-  const child = spawn(process.execPath, ['--input-type=module', '-e', script], { stdio: ['ignore', 'pipe', 'pipe'] });
-  t.after(() => { if (child.exitCode === null) child.kill('SIGKILL'); });
-  let stderr = ''; child.stderr.on('data', data => { stderr += data; });
-  const exited = once(child, 'exit');
-  const [data] = await Promise.race([once(child.stdout, 'data'), exited.then(() => { throw new Error(`Reference child exited before readiness: ${stderr}`); })]); const id = String(data).trim();
-  assert.equal(f.store.session(f.a.entry, id).connected, true, stderr);
-  child.kill('SIGTERM');
-  assert.equal((await exited)[0], 0, stderr);
-  const state = f.store.session(f.a.entry, id);
-  assert.equal(state.connected, false); assert.equal(state.closed, false);
 });

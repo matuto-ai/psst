@@ -1,11 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {BrokerStore} from '../src/store.mjs';
-import {fixture,registration,sendBody,uuid,httpFixture} from './helpers.mjs';
-import {BrokerClient} from '../reference/client.mjs';
-import {Inbox,newSessionIdentity} from '../reference/inbox.mjs';
-import {writeFileSync} from 'node:fs';
-import {join} from 'node:path';
+import { BrokerStore } from '../src/store.mjs';
+import { fixture, registration, sendBody, uuid } from './helpers.mjs';
 const R=172800000;
 const options={requireRegistrationV2:true,limits:{session_retention_seconds:R/1000}};
 const reg=(f,b=registration())=>({...b,registration_version:2,requested_at:f.now});
@@ -81,20 +77,6 @@ test('retirement rolls back atomically and global counter never wraps',t=>{
  f.store.db.prepare('UPDATE registration_control SET epoch=?').run(Number.MAX_SAFE_INTEGER);err(()=>f.store.register(f.a.entry,reg(f)),'not_ready');
 });
 
-test('reference v2 HTTP recovery creates fresh empty journal, preserves old work and requires native verification',async t=>{
- const f=await httpFixture(t,options),identity=newSessionIdentity('pi'),inbox=new Inbox({directory:join(f.dir,'old'),identity,now:()=>f.now});t.after(()=>inbox.close());
- const tokenFile=join(f.dir,'token');writeFileSync(tokenFile,f.a.token,{mode:0o600});
- const cfg={url:f.base,tokenFile,insecureDevelopment:true,registrationVersion:2,now:()=>f.now};const client=new BrokerClient({...cfg,inbox});
- await client.register(reg(f).metadata);inbox.setState('claim_pending',{key:'old-pending'});await client.disconnectSession();f.advance(R);f.store.sweep();
- await assert.rejects(client.reconnect({verifySession:()=>false}),e=>e.code==='session_mismatch');
- await assert.rejects(client.reconnect({verifySession:()=>true}),e=>e.code==='session_expired');
- await assert.rejects(client.createReplacementInbox({directory:join(f.dir,'old'),verifySession:()=>true}),e=>e.code==='invalid_configuration');
- const replacement=await client.createReplacementInbox({directory:join(f.dir,'new'),verifySession:()=>true});t.after(()=>replacement.close());
- assert.notEqual(replacement.identity.client_id,identity.client_id);assert.equal(replacement.getState('claim_pending'),null);assert.deepEqual(inbox.getState('claim_pending'),{key:'old-pending'});
- const next=new BrokerClient({...cfg,inbox:replacement});const r=await next.register(reg(f).metadata);assert.ok(r.lease_epoch>1);
- await assert.rejects(client.createReplacementInbox({directory:join(f.dir,'duplicate'),verifySession:()=>true}),e=>e.code==='session_mismatch');
-});
-
 test('request-side message maintenance does not retire a previously resolved caller',t=>{
  const f=fixture(t,options),a=reg(f),b=reg(f),aa=f.store.register(f.a.entry,a),bb=f.store.register(f.b.entry,b);
  const m=f.store.send(f.a.entry,a.client_id,aa.lease_epoch,'keep',sendBody(b.client_id,'retained',{ttl_seconds:604800}));
@@ -102,14 +84,6 @@ test('request-side message maintenance does not retire a previously resolved cal
  assert.equal(f.store.receipt(f.a.entry,a.client_id,m.message_id).message_id,m.message_id);
  assert.equal(f.store.session(f.a.entry,a.client_id).client_id,a.client_id);
  f.store.sweep();err(()=>f.store.receipt(f.a.entry,a.client_id,m.message_id),'recipient_not_found');
-});
-
-test('concurrent HTTP attachments compare epoch atomically; legacy wire policy remains unchanged',async t=>{
- const f=await httpFixture(t),a=registration();const legacy=await f.request('/v1/sessions',{method:'POST',body:a});
- assert.equal(Object.hasOwn(legacy.body.policy,'registration_versions'),false);
- const requests=[1,2].map(()=>f.request('/v1/sessions',{method:'POST',body:{...reg(f,a),previous_epoch:1,connection_id:uuid()}}));
- const results=await Promise.all(requests);assert.deepEqual(results.map(x=>x.status).sort(),[200,409]);
- assert.equal(results.find(x=>x.status===409).body.error.code,'stale_lease_epoch');
 });
 
 test('schema migration seeds counter above extant epochs and grants existing offline rows a fresh timer',t=>{

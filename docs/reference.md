@@ -6,9 +6,7 @@ does not type into terminals, and has no abort, steer, approval or permission-re
 operation. A broker `delivered` receipt means SQLite inbox storage only.
 
 Run `node --test test/reference.test.mjs test/mcp-stdio.test.mjs` with the pinned
-Node runtime. Tests use disposable local credentials, fake harnesses and an
-isolated test certificate. The TLS tests also require `openssl`. Fake-harness
-results do not certify real CLI versions or safe input APIs.
+Node runtime. Tests use disposable local credentials, temporary inboxes, in-memory streams and injected clients. No server, TLS certificate or native host is launched. These results do not certify real CLI versions or safe input APIs.
 
 ## Modules and host integration
 
@@ -242,10 +240,9 @@ bounded codes only. Notable local codes are `owner_conflict`, `session_mismatch`
 ## Verification scope
 
 The reference suite covers durable duplicate receipt and mismatch rejection,
-pre/post-commit failures, failed rollback, restart and SIGKILL lock recovery,
+pre/post-commit failures, failed rollback and local inbox reopen,
 finite quotas/retention/disk pressure, ACK loss, 12 minutes of fake-clock presence
-under blocked input states, native-intent ambiguity, provenance, strict TLS,
-absolute request deadlines, stable send keys and real broker HTTP integration.
+under blocked input states, native-intent ambiguity, provenance, stable send keys and injected-client runtime shutdown. Live HTTP/TLS and subprocess tests were removed.
 MCP tests cover handshake, argument/frame bounds, lifecycle, safe output and the
 non-consuming cooperative boundary. Real CLI safety, container deployment and
 two-host LAN operation require their separately recorded integration evidence.

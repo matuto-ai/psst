@@ -1,5 +1,7 @@
 # Compatibility evidence and release gates
 
+**Scope note (2026-11-04):** this feasibility/reference material retains historical host observations. Its old probes are archived links, not current CI requirements. The automated suite is now [focused unit verification](verification.md); live-host verification is purpose-specific when requested.
+
 ## What this record establishes
 
 The broker owns authenticated transport, registry state and durable message delivery.
@@ -13,7 +15,7 @@ This record reconciles evidence available on **2026-11-03** for
 [issue #11](https://github.com/matuto-ai/psst/issues/11). It includes newer connector
 qualification without treating isolated fixtures as the complete native matrix.
 Exact revisions, CI runs and limits are in the
-[verification snapshot](verification.md#evidence-snapshot-2026-11-03).
+[verification snapshot](https://github.com/matuto-ai/psst/blob/2d766b72edd9ed34f21cb93893a737aea0721f21/docs/verification.md#evidence-snapshot-2026-11-03).
 
 The executable contract is documented in [contract.md](contract.md#real-harness-release-gates).
 The safety requirements remain in [spec-v1.md](spec-v1.md#9-adapter-contract-safe-conversational-delivery).
@@ -32,8 +34,8 @@ version and local provider conditions.
 | Claude Code **2.1.310** | Official hook-to-MCP input qualification preserves native permission denial. Actual same-process `/clear` creates a new lifetime/mailbox and `/compact` preserves them, using one host/MCP process and a loopback provider. | The native lifecycle probe explicitly excludes monitor delivery and authenticated-model acceptance. Automatic monitor idle/busy/restart and prolonged-offline notice consumption still need their own evidence. |
 | OpenCode **2.2.5** libraries/plugin API | Official loader/CodeMode integration, packed root plugin and real container recreation; fixture-based synthetic admission/context proof and durable offline-notice recovery. | The cited CI run skips three optional official CLI cases: packed native-plugin automatic admission, URL-only native setup, and native plugin-manager installation. Interactive TUI/authenticated-model notice acceptance is not established by the library/API fixtures. |
 
-The [verification snapshot](verification.md#connector-qualification) links each
-source revision and CI run. The older [Pi 1.4 probe](probes/pi-1.4/README.md)
+The [verification snapshot](https://github.com/matuto-ai/psst/blob/2d766b72edd9ed34f21cb93893a737aea0721f21/docs/verification.md#connector-qualification) links each
+source revision and CI run. The older [Pi 1.4 probe](https://github.com/matuto-ai/psst/blob/2d766b72edd9ed34f21cb93893a737aea0721f21/docs/probes/pi-1.4/README.md)
 remains a historical archive: its Antigravity child was synthetic and its void
 native API left the item pending. That result does not describe every later Pi
 connector path.
@@ -63,7 +65,7 @@ Host events/contexts are synthetic and the test invokes cooperative ACKs. This
 does not prove same-native-session pending-inbox recovery or automatic native
 input. That independent compatibility lane keeps the older connector cohort; its
 pass does not establish compatibility of newer connector heads together. See the
-[exact matrix pins](verification.md#packaged-connector-matrix).
+[exact matrix pins](https://github.com/matuto-ai/psst/blob/2d766b72edd9ed34f21cb93893a737aea0721f21/docs/verification.md#packaged-connector-matrix).
 
 The new `current-transport` lane composes four newer immutable package revisions
 through their production native connector boundaries. It covers 32 directed
@@ -72,7 +74,7 @@ cycle, retaining four original installation approvals. Pi/OpenCode automatic
 delivery is exercised against synthetic host APIs/history. Claude/Antigravity
 actual monitor/waiter notices lead to explicitly simulated model read/ACK actions.
 Broker/TLS/inboxes are real; native host inputs/receipts and model actions are
-synthetic. The [current-cohort record](verification.md#current-packaged-cohort-with-synthetic-native-boundaries)
+synthetic. The [current-cohort record](https://github.com/matuto-ai/psst/blob/2d766b72edd9ed34f21cb93893a737aea0721f21/docs/verification.md#current-packaged-cohort-with-synthetic-native-boundaries)
 specifies pins, assertions and reproducible commands. This does not certify an
 official CLI, authenticated model, native package-manager install or any cell below.
 
@@ -98,10 +100,10 @@ than automatically replaying an ambiguous native submission.
 
 ## Environment evidence boundary
 
-- **Broker/runtime:** the current cited CI passes pinned Node 24.19.0 / SQLite
+- **Broker/runtime:** the historical cited CI passes pinned Node 24.19.0 / SQLite
   3.53.3 tests, Docker/nonroot packaging, browser/admin fixtures and rootless
   Podman jobs. These are runner results, not a new local or user-host run.
-- **Same-host container transport:** CI exercises a separate rootless container
+- **Same-host container transport:** Historical CI exercised a separate rootless container
   reaching host HTTPS with CA/SAN/auth checks on the tested route, plus
   container-removal/recreation persistence fixtures. This is narrower than
   universal rootless networking or a four-native-host topology.

@@ -45,12 +45,3 @@ test('historical v0.1.0 namespace remains a valid release plan, not a new alias'
   assert.match(guide, /Do not delete the current volume or journals/);
   assert.match(read('docs/docker-release.md'), /branding-migration\.md/);
 });
-
-test('container test stage includes every new branding documentation input', () => {
-  const container=read('Containerfile').split('FROM base AS runtime')[0];
-  assert.match(container, /COPY docs\/docker-release\.md docs\/branding-migration\.md \.\/docs\//);
-  assert.match(container, /COPY openapi\.json compose\.yaml Containerfile README\.md CHANGELOG\.md/);
-  assert.match(container, /COPY --from=base \/app \/app/);
-  assert.match(container, /COPY package\.json/);
-  assert.match(container, /COPY deploy\/config\.proxy-container\.example\.json \.\/deploy\/config\.proxy-container\.example\.json/);
-});

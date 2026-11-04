@@ -124,39 +124,8 @@ console does not extend the broker's retention or turn it into an archive.
 receipt, not that a model read, processed, answered or completed anything.
 Uncertainty is displayed explicitly and must not be treated as non-delivery.
 
-## Verification and local visual fixtures
+## Verification
 
-Run `npm test` and `npm run check` on pinned Node 24.19.0. The admin tests exercise
-actual HTTP handlers/cookies/forms as well as bounded data projections, duplicate
-names, multiple installations, expiry/closed/restart presence, filters and
-pagination, secret/path exclusion, escaping, missing/retained-content states and
-unauthenticated deep links. Existing approval/TLS tests remain applicable.
+Admin projection, sorting, filtering, pagination, escaping, private-data exclusion and theme rules have focused local tests. Admin page and authentication tests call the handler with in-memory request/response doubles; they preserve CSRF/origin checks, session rotation/expiry and response security headers without opening a server.
 
-For real Chromium interaction regressions against a disposable loopback broker,
-with Python Playwright 1.62.0 and its Chromium installed, run:
-
-```sh
-python scripts/admin-browser-smoke.py
-```
-
-`ADMIN_TEST_NODE` may select the pinned Node binary; `ADMIN_TEST_CHROMIUM` may
-select an already installed Chromium. `ADMIN_TEST_ARTIFACTS` selects a disposable
-screenshot directory. The script covers debounce/caret, history, explicit All,
-sort/paging, stale-response cancellation, error/retry, navigation, themes/storage
-failures, responsive layout, logout and no-JS fallback. CI runs it in the existing
-container job and retains only synthetic PNGs, never test cookies or fixture JSON.
-It is not a native connector/model acceptance test.
-
-For **synthetic static visual fixtures only**, run:
-
-```sh
-node scripts/admin-ui-preview.mjs /tmp/psst-admin-visual-fixtures
-```
-
-It creates standalone HTML under `dist/` and local static-preview metadata. It
-uses a disposable test database, destroys it before exiting, does not connect to
-an operator's broker and leaves no authenticated session. Do not treat clicking
-snapshot links/forms as a live integration test. In a managed QA environment use
-the supported `sites-preview start` route and built-in browser; never publish
-these fixtures as a service. Static snapshots are separate evidence from the
-HTTP integration tests and from native connector acceptance.
+The browser smoke/preview harnesses were removed. Unit results do not certify browser interactions, responsive layout or a deployed admin site. See [verification](verification.md).

@@ -1,5 +1,7 @@
 # First real local test: two fresh Claude Code sessions
 
+This optional operator procedure is not part of automated testing. Its existing local image name can be built with `podman build --target runtime -f Containerfile -t localhost/ai-agent-msg-broker-test:reviewed .`; the name is only a local compatibility alias, not a test image stage.
+
 **Already have sessions/plugins running, or only want the broker?** Use
 [broker-only startup](local-broker-test.md) instead. This optional guide launches
 new sessions and is not a prerequisite for connecting your existing clients.

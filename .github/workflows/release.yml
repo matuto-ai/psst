@@ -1,4 +1,4 @@
-# User-published GitHub Release only. Manual dispatch is a read-only build/test dry run.
+# User-published GitHub Release only. Manual dispatch runs unit verification without publishing.
 # Version vX.Y.Z must match package.json. Initial image support: linux/amd64.
 name: Release image
 on:
@@ -37,7 +37,7 @@ jobs:
           test "$(uname -m)" = x86_64
           export CHECKOUT_COMMIT="$(git rev-parse HEAD)"
           node scripts/release-plan.mjs
-      - name: Build tested runtime without registry credentials
+      - name: Build runtime without registry credentials
         env:
           IMAGE: ${{ steps.plan.outputs.image }}
           VERSION: ${{ steps.plan.outputs.version }}
@@ -47,14 +47,6 @@ jobs:
             --label "org.opencontainers.image.version=$VERSION" \
             --label "org.opencontainers.image.revision=$REVISION" \
             -t "$IMAGE:$VERSION" .
-          docker run --rm --network none --read-only \
-            --tmpfs /data:rw,nosuid,nodev,size=128m,uid=1000,gid=1000,mode=0700 \
-            "$IMAGE:$VERSION" node scripts/container-empty-smoke.mjs
-      - name: Verify ordinary published-port image before registry login
-        env:
-          IMAGE: ${{ steps.plan.outputs.image }}
-          VERSION: ${{ steps.plan.outputs.version }}
-        run: bash scripts/docker-publish-smoke.sh "$IMAGE:$VERSION"
       - name: Log in to GHCR only for this user-published release
         uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:

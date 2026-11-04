@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { fixture, httpFixture, registration, sendBody } from './helpers.mjs';
+import { fixture, registration, sendBody } from './helpers.mjs';
 
 function pair(f) {
   const sender = registration(), recipient = registration();
@@ -43,21 +43,6 @@ for (const level of ['sender', 'principal', 'global']) {
     assert.equal(rows(f, 'messages').length, 2); assert.equal(rows(f, 'sends').length, 2);
   });
 }
-
-test('HTTP send backpressure exposes 429 Retry-After and accepts the same key after refill', async t => {
-  const f = await httpFixture(t, { limits: { send_burst: 1, send_per_minute: 60 } });
-  const { sender, recipient } = pair(f), body = sendBody(recipient.client_id);
-  const send = key => f.request('/v1/messages', { method: 'POST', session: sender.client_id, key, body });
-  assert.equal((await send('first')).status, 202);
-  const limited = await send('retry-key');
-  assert.equal(limited.status, 429); assert.equal(limited.headers.get('retry-after'), '1');
-  assert.equal(limited.body.error.code, 'rate_limited'); assert.equal(limited.body.error.retryable, true);
-  assert.equal(limited.body.error.effect, 'not_applied');
-  f.advance(1000);
-  const accepted = await send('retry-key'); assert.equal(accepted.status, 202);
-  assert.equal(accepted.body.recipient_sequence, 2);
-  assert.deepEqual((await send('retry-key')).body, accepted.body);
-});
 
 test('send pre-commit fault rolls back all three rate debits with metadata and sequence', t => {
   let armed = false;

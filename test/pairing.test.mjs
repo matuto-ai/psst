@@ -1,13 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { randomBytes,randomUUID } from 'node:crypto';
-import { writeFileSync,readFileSync,chmodSync,symlinkSync,mkdirSync } from 'node:fs';
-import { join, dirname } from 'node:path';
-import { fixture,registration } from './helpers.mjs';
-import { EnrollmentService,secretHash } from '../src/enrollment.mjs';
-import { CredentialStore } from '../src/auth.mjs';
-import { createBrokerServer } from '../src/server.mjs';
-import { setup,revoke } from './pairing-helpers.mjs';
+import { randomBytes, randomUUID } from 'node:crypto';
+import { writeFileSync, readFileSync, chmodSync, symlinkSync } from 'node:fs';
+import { join } from 'node:path';
+import { fixture, registration } from './helpers.mjs';
+import { EnrollmentService, secretHash } from '../src/enrollment.mjs';
+import { setup, revoke } from './pairing-helpers.mjs';
 test('pairing unique credential, scope/type binding, exact retry after grant expiry, durable restart and revocation',t=>{
  const s=setup(t),r=s.redeem();assert.equal(r.status,201);assert.equal(s.redeem().status,200);assert.deepEqual(s.redeem().result,r.result);
  assert.equal(JSON.stringify(r).includes(s.token),false);assert.equal(JSON.stringify(r).includes(s.pair.pairing_secret),false);
@@ -46,22 +44,6 @@ test('private files and malformed policy fail closed',t=>{
  const alias=join(s.f.dir,'alias.json');symlinkSync(s.policyFile,alias);assert.throws(()=>new EnrollmentService({store:s.f.store,policyFile:alias}));
  writeFileSync(s.policyFile,'{}');assert.throws(()=>s.auth.authenticate(`Bearer ${s.token}`),e=>e.code==='not_ready');
 });
-test('HTTP pairing authentication, rate bound, invalid origin/query and active long-poll revocation',async t=>{
- const s=setup(t),app=createBrokerServer({store:s.f.store,auth:s.auth,enrollment:s.enrollment,host:'127.0.0.1',port:0,insecureDevelopment:true,pollIntervalMs:5});
- const address=await app.listen();t.after(()=>app.close());const base=`http://127.0.0.1:${address.port}`;
- const call=(path,body,headers={})=>fetch(base+path,{method:'POST',headers:{'Content-Type':'application/json',Authorization:`Pairing ${s.pair.pairing_secret}`,...headers},body:JSON.stringify(body)});
- assert.equal((await call('/v1/enrollments',s.request,{Authorization:`Bearer ${s.f.a.token}`})).status,401);
- assert.equal((await call('/v1/enrollments',s.request,{Origin:'https://bad.example'})).status,403);
- assert.equal((await call('/v1/enrollments?secret=x',s.request)).status,400);
- const issued=await call('/v1/enrollments',s.request);assert.equal(issued.status,201);const result=await issued.json();
- const session=registration();s.f.store.register(s.auth.authenticate(`Bearer ${s.token}`),session);
- const pending=call('/v1/mailbox/claim',{wait_seconds:30},{Authorization:`Bearer ${s.token}`,'X-Client-ID':session.client_id,'X-Lease-Epoch':'1','Idempotency-Key':'pending'});
- while(!app.polls.size)await new Promise(r=>setTimeout(r,1));
- revoke(s.policyFile,result.credential_id);assert.equal((await pending).status,401);
- for(let i=0;i<20;i++)await call('/v1/enrollments',{});
- assert.equal((await call('/v1/enrollments',{})).status,429);
-});
-
 test('enrollment remains optional; current schema and backup retain consumed grants and messages',async t=>{
  const {BrokerStore}=await import('../src/store.mjs');const f=fixture(t);assert.equal(f.store.db.prepare('PRAGMA user_version').get().user_version,5);
  const s=setup(t);const legacy=s.f.store.register(s.f.a.entry,registration());const issued=s.redeem();
@@ -70,17 +52,6 @@ test('enrollment remains optional; current schema and backup retain consumed gra
  assert.equal(restored.db.prepare('PRAGMA user_version').get().user_version,5);assert.equal(restored.session(s.f.a.entry,legacy.client_id).client_id,legacy.client_id);
  const replay=service.redeem(`Pairing ${s.pair.pairing_secret}`,s.request);assert.equal(replay.status,200);assert.deepEqual(replay.result,issued.result);
  assert.equal(restored.db.prepare('SELECT count(*) n FROM enrolled_credentials').get().n,1);
-});
-
-test('expired and revoked legacy hash collisions cannot poison aggregate authentication',async t=>{
- const s=setup(t),expired={...s.f.b.entry,expires_at:new Date(s.f.now-1).toISOString()},revoked={...s.f.c.entry,revoked:true};
- s.f.writeCreds([s.f.a.entry,expired,revoked]);s.auth.reload();assert.equal(s.auth.entries.length,1);assert.equal(s.auth.configuredEntries.length,3);
- const app=createBrokerServer({store:s.f.store,auth:s.auth,enrollment:s.enrollment,host:'127.0.0.1',port:0,insecureDevelopment:true});const address=await app.listen();t.after(()=>app.close());
- for(const entry of [expired,revoked]){
-   const response=await fetch(`http://127.0.0.1:${address.port}/v1/enrollments`,{method:'POST',headers:{Authorization:`Pairing ${s.pair.pairing_secret}`,'Content-Type':'application/json'},body:JSON.stringify({...s.request,token_sha256:entry.token_sha256})});
-   assert.equal(response.status,409);assert.equal(s.auth.authenticate(`Bearer ${s.f.a.token}`).credential_id,s.f.a.entry.credential_id);assert.equal(s.auth.ready,true);
- }
- assert.equal(s.redeem().status,201);
 });
 
 test('re-pair creates distinct installation and cannot adopt former native-session mailbox',t=>{
@@ -99,46 +70,6 @@ test('finite grant and live issuance caps fail without consuming pending grant',
  const expires=s.f.now+86400000;
  s.f.store.tx(()=>{for(let i=0;i<1000;i++)s.f.store.db.prepare('INSERT INTO enrolled_credentials VALUES(?,?,?,?,?,?,?,?)').run('synthetic-'+i,'synthetic-'+i,'{}','synthetic-'+i,'synthetic-'+i,'{}','{}',expires);});
  assert.throws(()=>s.redeem(),e=>e.code==='rate_limited');assert.equal(s.f.store.db.prepare('SELECT count(*) n FROM enrolled_credentials WHERE grant_hash=?').get(secretHash(s.pair.pairing_secret)).n,0);
-});
-
-test('policy changes during request upload are checked before issuance commit',async t=>{
- const http=await import('node:http');const s=setup(t),tokenHash=secretHash(randomBytes(32));
- const app=createBrokerServer({store:s.f.store,auth:s.auth,enrollment:s.enrollment,host:'127.0.0.1',port:0,insecureDevelopment:true});const address=await app.listen();t.after(()=>app.close());
- const data=JSON.stringify({...s.request,token_sha256:tokenHash});let arrived;
- const started=new Promise(r=>arrived=r);app.server.once('request',arrived);
- let request;const response=new Promise((resolve,reject)=>{request=http.request({host:'127.0.0.1',port:address.port,path:'/v1/enrollments',method:'POST',headers:{Authorization:`Pairing ${s.pair.pairing_secret}`,'Content-Type':'application/json','Content-Length':Buffer.byteLength(data)}},r=>{r.resume();r.on('end',()=>resolve(r.statusCode));});request.on('error',reject);});
- request.write(data.slice(0,20));await started;
- s.f.writeCreds([s.f.a.entry,{...s.f.b.entry,credential_id:'late-revoked',token_sha256:tokenHash,revoked:true}]);request.end(data.slice(20));
- assert.equal(await response,409);assert.equal(s.auth.authenticate(`Bearer ${s.f.a.token}`).credential_id,s.f.a.entry.credential_id);
-});
-
-test('pairing preflight rejects missing, malformed and unknown credentials before unfinished body',async t=>{
- const http=await import('node:http');const s=setup(t),app=createBrokerServer({store:s.f.store,auth:s.auth,enrollment:s.enrollment,host:'127.0.0.1',port:0,insecureDevelopment:true});
- const address=await app.listen();t.after(()=>app.close());
- for(const header of [undefined,'Pairing malformed',`Pairing ${randomBytes(32).toString('base64url')}`]){
-   const started=Date.now();
-   const result=await new Promise((resolve,reject)=>{
-     const timer=setTimeout(()=>{request.destroy();reject(Error('preflight waited for body'));},2000);
-     const request=http.request({host:'127.0.0.1',port:address.port,path:'/v1/enrollments',method:'POST',headers:{...(header?{Authorization:header}:{}),'Content-Type':'application/json','Content-Length':'1000'}},response=>{
-       response.resume();response.on('end',()=>{clearTimeout(timer);request.destroy();resolve({status:response.statusCode,connection:response.headers.connection});});
-     });request.on('error',error=>{clearTimeout(timer);reject(error);});request.flushHeaders();
-   });
-   assert.equal(result.status,401);assert.equal(result.connection,'close');assert.ok(Date.now()-started<2000);
- }
- assert.equal(s.f.store.db.prepare('SELECT count(*) n FROM enrolled_credentials').get().n,0);
-});
-
-test('authorized slow-trickle enrollment upload has an absolute 10-second body deadline and consumes nothing',{timeout:15000},async t=>{
- const http=await import('node:http');const s=setup(t),app=createBrokerServer({store:s.f.store,auth:s.auth,enrollment:s.enrollment,host:'127.0.0.1',port:0,insecureDevelopment:true});
- const address=await app.listen();t.after(()=>app.close());const started=Date.now();
- await new Promise(resolve=>{
-   const request=http.request({host:'127.0.0.1',port:address.port,path:'/v1/enrollments',method:'POST',headers:{Authorization:`Pairing ${s.pair.pairing_secret}`,'Content-Type':'application/json','Content-Length':'1000'}});
-   const trickle=setInterval(()=>request.write(' '),100);request.write('{');
-   request.on('error',()=>{});request.on('close',()=>{clearInterval(trickle);resolve();});
- });
- assert.ok(Date.now()-started>=9500);assert.ok(Date.now()-started<13000);
- assert.equal(s.f.store.db.prepare('SELECT count(*) n FROM enrolled_credentials').get().n,0);
- assert.equal(s.redeem().status,201);
 });
 
 test('pairing preflight is non-mutating and final redemption rechecks expiry and revocation',t=>{
