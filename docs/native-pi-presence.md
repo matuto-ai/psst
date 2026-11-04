@@ -2,7 +2,7 @@
 
 This regression addresses the reported native-process flow in [issue #29](https://github.com/matuto-ai/psst/issues/29).
 It runs official **Pi 1.4.0 CLI processes in PTYs**, the packed production
-[Pi connector at `b87e298`](https://github.com/matuto-ai/pi-psst-connector/tree/b87e29851a21be4342f8f4585fc16b1003f6c763),
+Pi connector at the immutable current-main SHA resolved for this CI run,
 and the broker revision being tested over verified loopback TLS. One disposable
 installation receives real fixture admin approval. A local faux provider runs
 inside the official host. No user account, installed plugin, broker, credentials,
@@ -71,18 +71,26 @@ The required parallel `native-presence` CI job has a three-minute limit. The
 existing aggregate `verify` requires it to succeed alongside every existing job.
 Missing official-host or source inputs fail the test rather than silently skipping.
 CI retains only `native-presence.json`, including partial evidence on failure.
+The same current cohort used by the cross-connector matrix selects the Pi source.
+The gate checks its exact Git commit and builds and verifies the complete npm
+artifact before loading it. Source SHA, tree, package version and per-file hashes
+are recorded in the sanitized evidence. See [test provenance](connector-test-provenance.md).
 
 Local reproduction after installing the pinned official host and the connector's
 locked test dependencies:
 
 ```sh
+GITHUB_SHA=$(git rev-parse HEAD) \
+  node scripts/connector-provenance.mjs resolve /tmp/current-cohort.json
+# Check out the Pi commit in /tmp/current-cohort.json before this invocation.
+PSST_CURRENT_COHORT="$(cat /tmp/current-cohort.json)" \
 PI_TEST_INSTALL=/absolute/path/to/pi-host \
 PSST_NATIVE_PI_SOURCE=/absolute/path/to/pi-connector \
 PSST_NATIVE_PRESENCE_EVIDENCE=/absolute/path/to/native-presence.json \
   node --test integration/native-pi-presence.test.mjs
 ```
 
-Use Node 24.19.0 and the exact connector revision above. Linux PTYs, Python 3,
+Use Node 24.19.0 and clean Git checkouts at the recorded commits. Linux PTYs, Python 3,
 OpenSSL, npm and tar are required. The package is packed locally, not installed
 from a newly published npm release. Dependency installation uses ignored lifecycle
 scripts and never reads user model credentials.
