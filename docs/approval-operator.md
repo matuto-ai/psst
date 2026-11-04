@@ -67,3 +67,57 @@ restoration loses changes accepted after the snapshot. Never run two writers or
 replace a database while the broker runs. This is recovery, not an ordinary setup
 step. Administrator sessions expire after8hours and require fresh login after
 broker restart. Password changes require normal restart, invalidating UI sessions.
+
+
+## Revoked authorization retention
+
+Revoked installations remain in **Approvals & access** for 30 days (exactly
+2,592,000,000 milliseconds) from the first successful revocation. At that boundary
+they are excluded from each normal list read, before pagination. Refreshing the
+page is sufficient; no new enrollment, background job, or broker restart is
+required. An already-open page is a snapshot until refreshed. Repeating revoke
+does not restart the period. This is a fixed policy, with no operator setting in
+this version, independent of the credential's original expiration date.
+
+This is **visibility retention, not physical deletion**. The durable terminal
+request remains in SQLite indefinitely: request ID, token verifier (not the raw
+key), canonical original request/type/label, terminal state, original creation,
+request deadline and credential expiry, historical grant/result identities, and
+revocation timestamps. These records preserve exact replay responses, reject
+changed request bodies and reused keys/IDs, and retain the historical identity
+associated with the decision. They never provide active credentials. Database
+backups retain the same metadata under the operator's backup policy.
+
+Revoked rows are excluded from terminal garbage collection. There is no safe
+automatic deletion boundary while old clients may poll/replay or reuse the key:
+hiding a record must not forget the revocation or collision reservation. This
+release conservatively retains the existing terminal record rather than
+introducing a second archive format. The 10,000-request admission bound counts
+non-revoked records and revoked records still inside their visibility window.
+Archived revocations do not consume admission capacity, so historical revocations
+cannot permanently prevent new setup. The separate 1,000-pending-request limit
+is unchanged. Durable tombstones still consume disk space and backup capacity;
+operators should monitor storage growth. Do not delete them to reclaim space:
+there is no automatic tombstone purge or storage quota that forgets revocation. Denied and expired requests
+keep their existing, separate cleanup rule: on new enrollment, delete records
+more than 30 days past the later of request deadline and credential expiry.
+Pending/approved requests, session identities and message retention are unchanged.
+
+### Existing records and restart
+
+The upgrade adds nullable `revoked_at` and `revocation_observed_at` columns in one
+transaction. For an existing revoked row whose true revocation time is unknown,
+`revoked_at` stays null. The first upgraded startup records the current broker
+clock as `revocation_observed_at` and grants a full 30-day visibility grace period
+from that observation. It is not presented as the historical revocation time.
+The observation is persisted, so restarts and repeated revoke cannot extend it.
+No historical record is purged, including already-old revoked installations.
+
+A successful new revoke records its actual broker-clock timestamp. Broker clocks
+must be maintained accurately; a backwards clock adjustment can delay visibility
+expiry. Access remains denied regardless of visibility or clock adjustments.
+The old broker's garbage collector includes revoked rows, so do not run an older
+binary against an upgraded database: it can discard retained revocation evidence.
+Use the established private backup/recovery process for rollback, and account for
+decisions made after a backup before serving traffic. No production cleanup or
+deployment is part of this change.
