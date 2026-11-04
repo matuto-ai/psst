@@ -1,3 +1,4 @@
+import { adminFavicon, adminFaviconPath } from './admin-favicon.mjs';
 import { createHash, randomBytes, timingSafeEqual, scrypt as scryptCallback } from 'node:crypto';
 import { promisify } from 'node:util';
 import { ApiError } from './protocol.mjs';
@@ -45,7 +46,7 @@ export class AdminUI {
     });
   }
   cookie(session){return `psst_admin=${session?.cookie??''}; Path=/admin; HttpOnly; SameSite=Strict; Max-Age=${session?Math.max(0,Math.floor((session.expires-this.store.clock())/1000)):0}${this.insecureDevelopment?'':'; Secure'}`;}
-  headers(){return {'Content-Type':'text/html; charset=utf-8','Cache-Control':'no-store','X-Content-Type-Options':'nosniff','Content-Security-Policy':`default-src 'none'; script-src 'sha256-${createHash("sha256").update(adminClient).digest("base64")}'; connect-src 'self'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'`,'Referrer-Policy':'same-origin'};}
+  headers(){return {'Content-Type':'text/html; charset=utf-8','Cache-Control':'no-store','X-Content-Type-Options':'nosniff','Content-Security-Policy':`default-src 'none'; img-src 'self'; script-src 'sha256-${createHash("sha256").update(adminClient).digest("base64")}'; connect-src 'self'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'`,'Referrer-Policy':'same-origin'};}
   html(res,status,content,session,options={}){
     res.writeHead(status,{...this.headers(),...(session?{'Set-Cookie':this.cookie(session)}:{})});
     res.end(document(content,{...options,csrf:session?.csrf}));
@@ -68,6 +69,16 @@ export class AdminUI {
   redirect(res,session){res.writeHead(303,{...this.headers(),Location:'/admin','Set-Cookie':this.cookie(session)});res.end();}
   async handle(req,res,url){
     if(!url.pathname.startsWith('/admin'))return false;
+    if(url.pathname===adminFaviconPath){
+      const allowed=req.method==='GET'||req.method==='HEAD';
+      res.writeHead(allowed?200:405,{
+        'Content-Type':'image/svg+xml; charset=utf-8','X-Content-Type-Options':'nosniff',
+        'Cache-Control':allowed?'public, max-age=86400':'no-store',
+        'Content-Security-Policy':"default-src 'none'; sandbox",
+        ...(allowed?{}:{Allow:'GET, HEAD'})
+      });
+      res.end(allowed&&req.method==='GET'?adminFavicon:'');return true;
+    }
     const session=this.session(req);
     if(req.method==='GET'){
       const path=url.pathname,known=path==='/admin'||path==='/admin/approvals'||path==='/admin/sessions'||path==='/admin/messages'||/^\/admin\/messages\/[^/]+$/.test(path);
@@ -125,3 +136,4 @@ export class AdminUI {
     this.redirect(res,session);return true;
   }
 }
+
