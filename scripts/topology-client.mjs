@@ -8,6 +8,8 @@ import { Inbox, newSessionIdentity } from '../reference/inbox.mjs';
 import { BrokerClient } from '../reference/client.mjs';
 import { AdapterRuntime } from '../reference/runtime.mjs';
 import { TYPES } from '../src/protocol.mjs';
+import { lookup } from 'node:dns/promises';
+import { get } from 'node:https';
 
 const config = JSON.parse(readFileSync(process.argv[2] ?? '/run/client/config.json'));
 assert.ok(TYPES.includes(config.type));
@@ -55,7 +57,26 @@ try {
       else if (command === 'close') { await close(); value = { closed: true }; }
       else throw Error('unknown_topology_command');
       process.stdout.write(JSON.stringify({ id, value }) + '\n');
-    } catch (error) { process.stdout.write(JSON.stringify({ id, error: error.code ?? 'topology_probe_failed' }) + '\n'); }
+    } catch (error) {
+      // Disposable-fixture diagnostics only: no credential, message, path or
+      // untrusted free-text output. A fresh no-auth TLS request isolates socket
+      // reuse from DNS/network failure after an engine namespace restart.
+      let diagnostics;
+      if (error.code === 'request_failed') {
+        const host = new URL(config.url).hostname;
+        const dns = await Promise.race([lookup(host).then(value => ({ address: value.address }), reason => ({ error: reason.code })),
+          delay(1500).then(() => ({ error: 'timeout' }))]);
+        const https = await new Promise(resolve => {
+          const request = get(new URL('/healthz', config.url), { ca: client.ca, agent: false, timeout: 1500 }, response => {
+            response.resume(); resolve({ status: response.statusCode });
+          });
+          request.on('error', reason => resolve({ error: reason.code }));
+          request.on('timeout', () => { request.destroy(); resolve({ error: 'timeout' }); });
+        });
+        diagnostics = { dns, https };
+      }
+      process.stdout.write(JSON.stringify({ id, error: error.code ?? 'topology_probe_failed', diagnostics }) + '\n');
+    }
     if (closed) break;
   }
 } finally { await close(); }

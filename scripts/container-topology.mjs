@@ -44,7 +44,7 @@ async function startPeer(peer) {
     if (response.ready) { resolveReady(response); return; }
     const request = pending.get(response.id); if (!request) return;
     clearTimeout(request.timer); pending.delete(response.id);
-    if (response.error) request.reject(Error(`topology ${peer.type} ${request.command}: ${response.error}`)); else request.resolve(response.value);
+    if (response.error) request.reject(Error(`topology ${peer.type} ${request.command}: ${response.error} ${JSON.stringify(response.diagnostics ?? {})}`)); else request.resolve(response.value);
   });
   const startup = setTimeout(() => fail(Error(`topology startup timeout: ${stderr}`)), 20000);
   let initial; try { initial = await ready; } finally { clearTimeout(startup); }

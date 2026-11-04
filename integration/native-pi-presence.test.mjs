@@ -224,10 +224,10 @@ test('actual Pi lifecycle preserves resumable mail and truthful real-time presen
   retain();
   const selectedIdentity = a.clientId, selectedSession = a.sessionId;
   await a.call('write', { text: '/model faux-2\r' });
-  await until(() => records(a.observations).filter(event => event.event === 'model_select').at(-1), event => event?.model_id === 'faux-2', 'actual native model selection');
+  const modelSelection = await until(() => records(a.observations).filter(event => event.event === 'model_select').at(-1), event => event?.model_id === 'faux-2', 'actual native model selection');
   const switched = await until(() => row(a), snapshot => snapshot.model.id === 'faux-2', 'native model selection updates broker metadata');
   assert.equal(switched.client_id, selectedIdentity);
-  assert.equal(a.sessionId, selectedSession);
+  assert.equal(modelSelection.sessionId, selectedSession);
   const afterSwitch = await send(a, 'native delivery after actual model switch');
   await received(a, afterSwitch, 'native delivery after actual model switch');
   report.native_model_switch = { verified: true, preserved_native_conversation: true, preserved_broker_identity: true,

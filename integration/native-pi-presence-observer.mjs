@@ -15,7 +15,8 @@ export default async function observe(pi) {
     return fauxAssistantMessage('Disposable local provider receipt.');
   }));
   pi.registerProvider(provider.provider);
-  pi.on('model_select', event => record({ event: 'model_select', model_id: event.model.id, provider: event.model.provider }));
+  pi.on('model_select', (event, ctx) => record({ event: 'model_select', model_id: event.model.id, provider: event.model.provider,
+    sessionId: ctx.sessionManager.getSessionId() }));
   pi.on('agent_settled', event => record({ event: 'agent_settled', aborted: event.aborted === true }));
   let interval;
   pi.on('session_start', (_event, ctx) => {
