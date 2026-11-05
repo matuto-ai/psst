@@ -7,7 +7,7 @@ See the [technical-name inventory and migration/rollback plan](docs/branding-mig
 
 A generic, authenticated LAN message broker for independent AI CLI sessions. It owns the recipient registry, background presence, and durable **message delivery**—not conversations, tasks, model progress, or agent orchestration.
 
-**Status: pre-1.0 development.** The broker implementation, reference adapter and local stdio facade are on `main`. Version 0.7.0 is a source candidate until its release workflow succeeds. Native Pi, Antigravity CLI, Claude Code and OpenCode installation and receiving behavior must be validated separately; protocol fixtures and CI are not evidence of acceptance in a user environment.
+**Status: pre-1.0 development.** The broker implementation, reference adapter and local stdio facade are on `main`. Version 0.7.1 is a source candidate until its release workflow succeeds. Native Pi, Antigravity CLI, Claude Code and OpenCode installation and receiving behavior must be validated separately; protocol fixtures and CI are not evidence of acceptance in a user environment.
 
 ## Docker server
 
@@ -17,13 +17,12 @@ Use the [Docker image / Compose and release guide](docs/docker-release.md). The 
 
 Native setup asks only for the broker URL, followed by approval in the broker administration page. See [URL-only setup](docs/approval-operator.md) and the [approval contract](docs/approval-protocol.md). This flow is available since broker 0.4.0 and requires a compatible connector; it is not present in broker 0.3.0. Existing legacy bundles and ticket pairing remain compatible. Native automatic-receive acceptance is separate from the unit suite.
 
-## 0.7.0 source candidate
+## 0.7.1 source candidate
 
-This candidate includes the administration favicon, configurable finite
-installation lifetime (`PSST_AUTHORIZATION_DAYS`, 1–3650 days, default 90), and
-30-day revoked-authorization list visibility with durable revocation/replay
-records. Existing grants and receipts retain their expiry and identities.
-See [0.7.0 changes and compatibility](CHANGELOG.md#070-upgrade-notes).
+This patch removes the administration brand link's hover underline while
+preserving navigation and visible keyboard focus. It does not change database
+schema, authorization lifetime or transport behavior.
+See [0.7.1 changes and compatibility](CHANGELOG.md#071-upgrade-notes).
 Source preparation does not publish a release/image or activate a deployment.
 
 ## Optional session retention
