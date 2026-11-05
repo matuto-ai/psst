@@ -2,6 +2,7 @@ import { createHash, randomUUID, timingSafeEqual } from 'node:crypto';
 import { mkdtempSync, chmodSync, writeFileSync, openSync, closeSync, fsyncSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { backupDatabase } from '../scripts/backup.mjs';
+import { log } from './logger.mjs';
 import { ApiError, TYPES, canonical, validateUuid } from './protocol.mjs';
 
 // Revocation visibility is separate from durable replay/collision protection.
@@ -35,11 +36,11 @@ export class ApprovalService {
     }
     return new ApprovalService(options);
   }
-  constructor({store,scope='psst',principal='owner',pendingMs=86400000,credentialMs=7776000000}) {
+  constructor({store,scope='psst',principal='owner',pendingMs=86400000,credentialMs=7776000000,settings}) {
     if(!/^[-a-zA-Z0-9_.]{1,128}$/.test(scope)||!/^[-a-zA-Z0-9_.]{1,128}$/.test(principal)
       ||!Number.isSafeInteger(pendingMs)||pendingMs<1000||pendingMs>86400000
       ||!Number.isSafeInteger(credentialMs)||credentialMs<1000||credentialMs>MAX_AUTHORIZATION_DAYS*DAY_MS)throw Error('invalid_approval_settings');
-    Object.assign(this,{store,scope,principal,pendingMs,credentialMs});
+    Object.assign(this,{store,scope,principal,pendingMs,credentialMs,settings});
     store.tx(()=>{store.db.exec(`CREATE TABLE IF NOT EXISTS approval_requests (
       id TEXT PRIMARY KEY, token_hash TEXT UNIQUE NOT NULL, request TEXT NOT NULL,
       type TEXT NOT NULL, label TEXT NOT NULL, state TEXT NOT NULL,
@@ -64,7 +65,8 @@ export class ApprovalService {
   }
   expire(){
     const now=this.store.clock();
-    this.store.db.prepare("UPDATE approval_requests SET state='expired' WHERE (state='pending' AND deadline<=?) OR (state='approved' AND expires<=?)").run(now,now);
+    const expired=this.store.db.prepare("UPDATE approval_requests SET state='expired' WHERE (state='pending' AND deadline<=?) OR (state='approved' AND expires<=?)").run(now,now);
+    if(expired.changes)this.store.diagnostic('debug','PSST_APPROVAL_EXPIRED',{count:expired.changes});
   }
   view(row){
     const result={request_id:row.id,state:row.state,request_expires_at:iso(row.deadline)};
@@ -76,7 +78,7 @@ export class ApprovalService {
     if(!input||Array.isArray(input)||Object.keys(input).some(k=>!['request_id','client_type','label'].includes(k))
       ||!TYPES.includes(input.client_type)||typeof input.label!=='string'||input.label.length>80||/[\u0000-\u001f\u007f]/u.test(input.label))throw new ApiError(400,'invalid_request','body');
     const id=validateUuid(input.request_id,'request_id');const request=canonical(input);
-    return this.store.tx(()=>{
+    const outcome=this.store.tx(()=>{
       this.expire();
       const prior=this.store.db.prepare('SELECT * FROM approval_requests WHERE id=?').get(id);
       if(prior){
@@ -92,9 +94,11 @@ export class ApprovalService {
       if(this.store.db.prepare("SELECT count(*) n FROM approval_requests WHERE state!='revoked' OR coalesce(revoked_at,revocation_observed_at)>?").get(this.store.clock()-REVOKED_RETENTION_MS).n>=10000
         ||this.store.db.prepare("SELECT count(*) n FROM approval_requests WHERE state='pending'").get().n>=1000)throw new ApiError(429,'rate_limited',null,{retryable:true,retry_after:60});
       const now=this.store.clock();
-      this.store.db.prepare('INSERT INTO approval_requests(id,token_hash,request,type,label,state,created,deadline) VALUES(?,?,?,?,?,?,?,?)').run(id,tokenHash,request,input.client_type,input.label,'pending',now,now+this.pendingMs);
+      this.store.db.prepare('INSERT INTO approval_requests(id,token_hash,request,type,label,state,created,deadline) VALUES(?,?,?,?,?,?,?,?)').run(id,tokenHash,request,input.client_type,input.label,'pending',now,now+(this.settings ? this.settings.get('pending_request_hours')*3600000 : this.pendingMs));
       return {status:201,result:this.view(this.store.db.prepare('SELECT * FROM approval_requests WHERE id=?').get(id))};
     });
+    log(this.store.logger, outcome.status===201?'info':'debug', 'PSST_APPROVAL_REQUEST_PROCESSED', {authorization_id:id,state:outcome.result.state,replayed:outcome.status!==201});
+    return outcome;
   }
   status(header,id){
     const proof=this.proof(header);validateUuid(id,'path.request_id');
@@ -111,7 +115,7 @@ export class ApprovalService {
   decide(id,action,existing=[]){
     validateUuid(id,'path.request_id');
     if(!['approve','deny','revoke'].includes(action))throw new ApiError(400,'invalid_request');
-    return this.store.tx(()=>{
+    const outcome=this.store.tx(()=>{
       this.expire();const row=this.store.db.prepare('SELECT * FROM approval_requests WHERE id=?').get(id);
       if(!row)throw new ApiError(404,'invalid_request');
       if((action==='approve'&&row.state==='approved')||(action==='deny'&&row.state==='denied')||(action==='revoke'&&row.state==='revoked'))return this.view(row);
@@ -119,7 +123,7 @@ export class ApprovalService {
       else if(action==='deny'&&row.state==='pending')this.store.db.prepare("UPDATE approval_requests SET state='denied' WHERE id=?").run(id);
       else if(action==='approve'&&row.state==='pending'){
         if(existing.some(c=>c.token_sha256===row.token_hash&&c.approval_request_id!==id))throw new ApiError(409,'idempotency_conflict');
-        const credential_id=`enrolled-${randomUUID()}`,adapter_id=`installation-${randomUUID()}`,expires=this.store.clock()+this.credentialMs;
+        const credential_id=`enrolled-${randomUUID()}`,adapter_id=`installation-${randomUUID()}`,expires=this.store.clock()+(this.settings ? this.settings.get('authorization_days')*DAY_MS : this.credentialMs);
         if(existing.some(c=>c.credential_id===credential_id||c.adapter_id===adapter_id))throw new ApiError(409,'idempotency_conflict');
         const result={credential_id,adapter_id,client_type:row.type,scopes:[this.scope],expires_at:iso(expires),protocol_version:'1'};
         const entry={credential_id,adapter_id,principal_id:this.principal,client_types:[row.type],scopes:[this.scope],expires_at:result.expires_at,token_sha256:row.token_hash};
@@ -127,6 +131,8 @@ export class ApprovalService {
       }else throw new ApiError(409,'idempotency_conflict');
       return this.view(this.store.db.prepare('SELECT * FROM approval_requests WHERE id=?').get(id));
     });
+    log(this.store.logger, 'info', 'PSST_APPROVAL_DECISION_APPLIED', {authorization_id:id,state:outcome.state});
+    return outcome;
   }
   reservations(){return this.store.db.prepare('SELECT id,token_hash FROM approval_requests').all().map(r=>({token_sha256:r.token_hash,approval_request_id:r.id}));}
   credentials(){return this.store.db.prepare("SELECT entry FROM approval_requests WHERE state='approved' AND expires>?").all(this.store.clock()).map(r=>JSON.parse(r.entry));}

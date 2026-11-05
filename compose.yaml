@@ -1,10 +1,15 @@
 services:
   broker:
-    image: ${BROKER_IMAGE:-ghcr.io/matuto-ai/psst:0.7.1}
+    image: ${BROKER_IMAGE:-ghcr.io/matuto-ai/psst:0.7.2}
     environment:
-      PSST_ADMIN_PASSWORD: ${PSST_ADMIN_PASSWORD:-}
-      PSST_AUTHORIZATION_DAYS: ${PSST_AUTHORIZATION_DAYS:-90}
-      PSST_PUBLIC_ORIGIN: ${PSST_PUBLIC_ORIGIN:-}
+      - PSST_ADMIN_PASSWORD=${PSST_ADMIN_PASSWORD:-}
+      - PSST_PUBLIC_ORIGIN=${PSST_PUBLIC_ORIGIN:-}
+      # Pass through only when set; unset values leave Settings editable.
+      - PSST_LOG_LEVEL
+      - PSST_AUTHORIZATION_DAYS
+      - PSST_PENDING_REQUEST_HOURS
+      - PSST_ADMIN_SESSION_HOURS
+      - PSST_DEFAULT_MESSAGE_TTL_SECONDS
     restart: unless-stopped
     read_only: true
     cap_drop: [ALL]

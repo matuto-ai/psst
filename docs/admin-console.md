@@ -148,9 +148,9 @@ Installation access displays **Authorization expires** only for an approved
 installation. Terminal grants display **Historical authorization expiry
 (inactive)**; pending, denied and never-approved expired requests display
 **No authorization granted**, without exposing their request deadline as a grant
-expiry. **Requested** remains the creation timestamp. Pending requests still
-expire after 24 hours internally and in connector status. Finite authorization
-lifetime is configured in days through the deployment environment; existing
+expiry. **Requested** remains the creation timestamp. Pending requests
+default to 24 hours internally and in connector status. Finite authorization
+lifetime is configured in days through Settings or the deployment environment; existing
 grants are never extended by changing it. See the
 [operator lifetime policy](approval-operator.md#configure-authorization-lifetime).
 
@@ -163,3 +163,11 @@ contains no session or installation data. Only GET/HEAD are supported; private
 HTML remains uncached and authenticated pages keep their existing access checks.
 The icon may be cached for one day. This is source for 0.7.0, not a published
 image or deployment.
+
+### Settings and diagnostics
+
+The authenticated **Settings** page controls log verbosity and separate future
+authorization, pending-request, administrator-session and default message clocks.
+It shows effective sources and locks deployment overrides. See
+[Diagnostics and Settings](logging-settings.md) for bounds, precedence, privacy,
+replay compatibility, error codes and recovery guidance.

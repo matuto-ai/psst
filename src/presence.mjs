@@ -68,6 +68,7 @@ export class PresenceService {
             AND EXISTS (SELECT 1 FROM json_each(s.scopes) WHERE value=m.scope) LIMIT 32`).all(sender, recipient.id, now).map(row => row.scope);
         db.prepare('INSERT INTO presence_events(id,sender,recipient,epoch,heartbeat,created,scopes) VALUES(?,?,?,?,?,?,?)')
           .run(randomUUID(), sender, recipient.id, recipient.epoch, recipient.heartbeat_at, now, JSON.stringify(scopes));
+        this.store.diagnostic('debug', 'PSST_PRESENCE_OFFLINE_RECORDED', {client_id:recipient.id, epoch:recipient.epoch});
         budget--;
       }
       if (!budget) return;

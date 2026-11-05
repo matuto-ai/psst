@@ -1,5 +1,47 @@
 # Changelog
 
+## 0.7.2 (source candidate; publish separately)
+
+- Add private English structured diagnostics with stable event codes, bounded
+  safe causes, request correlation, selectable log level and recurring-failure
+  recovery summaries. Logging failures do not change durable outcomes.
+- Add authenticated administrator Settings for log level and distinct future
+  authorization, pending-request, administrator-session and message lifetimes.
+  Persist validated preferences in SQLite; show environment/file overrides and
+  preserve existing security protections and expiry timestamps.
+- Correct redundant rollback after SQLite automatically ends a failed statement's
+  transaction, avoiding false store poisoning. Preserve uncertain commit outcomes
+  and poison the writer when rollback of an active transaction genuinely fails.
+  This isolated reproduction does not establish the cause of the live 503 report.
+- Preserve exact omitted-TTL send/resend replay across Settings changes and
+  restarts with retained per-send normalization metadata. Delivered in #66 / #67.
+- Prepare version metadata and image instructions for 0.7.2. No release, image
+  publication or deployment is performed by this PR.
+
+### 0.7.2 upgrade notes
+
+Back up and verify the existing SQLite database using the consistent private
+backup procedure before upgrading. Settings and per-send TTL metadata add tables
+at schema 5; they do not trigger an automatic migration snapshot on an existing
+schema-5 database. Pre-0.6.0 schema-5 migration requirements still apply.
+
+At first upgrade, legacy send records are seeded with the startup configured TTL
+default. Do not change that default simultaneously with upgrading if pending
+legacy operations need reconciliation; earlier default changes cannot be
+reconstructed. Existing expiry timestamps are never recalculated. Do not downgrade
+a live database to a binary that ignores these Settings/replay rules; restore a
+verified compatible snapshot under the existing recovery procedure instead.
+
+Existing grants, identities, connector receipts, transport, retention policies
+and default-off session cleanup remain unchanged. New duration settings affect
+future operations only and never renew existing authority. See
+[diagnostics and Settings](docs/logging-settings.md) and the earlier
+[0.7.0 upgrade notes](#070-upgrade-notes).
+
+The owner will publish `v0.7.2` separately from the reviewed, verified commit.
+Do not reuse published tags. Source preparation does not publish an image or
+deploy an installation. See [release instructions](docs/docker-release.md).
+
 ## 0.7.1 (source candidate; publish separately)
 
 - Remove hover underline from the administration brand while preserving its

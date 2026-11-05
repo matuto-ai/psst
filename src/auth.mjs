@@ -1,10 +1,12 @@
 import { readFileSync, openSync, fstatSync, closeSync, constants } from 'node:fs';
 import { createHash, timingSafeEqual } from 'node:crypto';
+import { log, nullLogger, FailureTracker } from './logger.mjs';
 import { ApiError, TYPES } from './protocol.mjs';
 
 /** Operator-owned verifier file. Empty means deny-all, never authentication bypass. */
 export class CredentialStore {
-  constructor({ path, onRevoke = () => {}, onPolicyChange = () => {}, clock = Date.now, additionalCredentials = () => [] }) {
+  constructor({ path, onRevoke = () => {}, onPolicyChange = () => {}, clock = Date.now, additionalCredentials = () => [], logger = nullLogger }) {
+    this.logger=logger;this.failures=new FailureTracker(logger,{clock});
     this.additionalCredentials=additionalCredentials;this.path=path;this.onRevoke=onRevoke;this.onPolicyChange=onPolicyChange;this.clock=clock;this.entries=[];this.serial=null;
     this.reload();
   }
@@ -36,8 +38,11 @@ export class CredentialStore {
       const revoked=this.entries.filter(c=>!active.some(n=>JSON.stringify(n)===JSON.stringify(c))).map(c=>c.credential_id);
       if(revoked.length)this.onRevoke(revoked);
       if(JSON.stringify(this.entries)!==JSON.stringify(active))this.onPolicyChange(active);
+      if(revoked.length)log(this.logger,'info','PSST_AUTHORIZATION_REMOVED',{count:revoked.length});
+      if(JSON.stringify(this.entries)!==JSON.stringify(active))log(this.logger,'info','PSST_AUTHORIZATION_POLICY_CHANGED',{count:active.length});
       this.entries=active;this.serial=raw;this.ready=active.length>0;
-    }catch(error){this.ready=false;throw error;}
+      this.failures.recover('reload','PSST_AUTH_RELOAD_RECOVERED',{operation:'reload'});
+    }catch(error){this.ready=false;this.failures.fail('reload','PSST_AUTH_RELOAD_FAILED',{operation:'reload'},error);throw error;}
   }
   authenticate(header) {
     try{this.reload();}catch{throw new ApiError(503,'not_ready',null,{retryable:true});}
@@ -45,7 +50,8 @@ export class CredentialStore {
     const hash=createHash('sha256').update(match?match[1]:'invalid').digest();
     let found;
     for(const entry of this.entries){if(timingSafeEqual(hash,Buffer.from(entry.token_sha256,'hex')))found=entry;}
-    if(!match||!found)throw new ApiError(401,'unauthenticated','headers.Authorization');
+    if(!match||!found){log(this.logger,'debug','PSST_AUTHENTICATION_REJECTED',{code:'unauthenticated'});throw new ApiError(401,'unauthenticated','headers.Authorization');}
+    log(this.logger,'debug','PSST_AUTHENTICATION_ACCEPTED');
     return found;
   }
 }

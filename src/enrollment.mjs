@@ -1,5 +1,6 @@
 import { openSync, closeSync, readFileSync, fstatSync, constants } from 'node:fs';
 import { createHash, randomUUID, timingSafeEqual } from 'node:crypto';
+import { log } from './logger.mjs';
 import { ApiError, TYPES, canonical, validateUuid } from './protocol.mjs';
 
 export const ENROLLMENT_LIMIT = 1000;
@@ -71,7 +72,7 @@ export class EnrollmentService {
       || !TYPES.includes(input.client_type) || typeof input.token_sha256 !== 'string' || !hashPattern.test(input.token_sha256)) throw new ApiError(400,'invalid_request','body');
     const b = { enrollment_id: validateUuid(input.enrollment_id, 'enrollment_id'), client_type: input.client_type, token_sha256: input.token_sha256 };
     const request = canonical(b), hash = secretHash(match[1]), p = this.policy(), now = this.store.clock();
-    return this.store.tx(() => {
+    const outcome = this.store.tx(() => {
       const prior = this.store.db.prepare('SELECT * FROM enrolled_credentials WHERE grant_hash=?').get(hash);
       if (prior) {
         if (prior.expires <= now || p.revoked_credentials.includes(prior.credential_id)) throw new ApiError(401,'unauthenticated');
@@ -96,5 +97,7 @@ export class EnrollmentService {
       this.store.db.prepare('INSERT INTO enrolled_credentials VALUES(?,?,?,?,?,?,?,?)').run(hash,b.enrollment_id,request,credential_id,b.token_sha256,canonical(entry),canonical(result),Date.parse(entry.expires_at));
       return { status: 201, result };
     });
+    log(this.store.logger,outcome.status===201?'info':'debug',outcome.status===201?'PSST_ENROLLMENT_ISSUED':'PSST_ENROLLMENT_REPLAYED',{operation:'authorization',status:outcome.status});
+    return outcome;
   }
 }

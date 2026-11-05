@@ -1,3 +1,4 @@
+import { log, nullLogger } from './logger.mjs';
 import { DatabaseSync } from 'node:sqlite';
 import { PresenceService, presenceSnapshot } from './presence.mjs';
 import { randomUUID } from 'node:crypto';
@@ -37,8 +38,9 @@ export class BrokerStore {
       return store;
     } catch(error) { try{store.close();}catch{} throw error; }
   }
-  constructor({ path, clock = Date.now, limits = {}, diskCheck, fault = () => {}, requireRegistrationV2 = false, [DEFER_MIGRATION]: deferMigration = false }) {
+  constructor({ path, logger = nullLogger, clock = Date.now, limits = {}, diskCheck, fault = () => {}, requireRegistrationV2 = false, [DEFER_MIGRATION]: deferMigration = false }) {
     if (typeof requireRegistrationV2 !== 'boolean') throw new Error('Invalid registration enforcement.');
+    this.logger = logger;
     this.requireRegistrationV2 = requireRegistrationV2;
     this.clock = clock;
     this.fault = fault;
@@ -68,10 +70,11 @@ export class BrokerStore {
     this.diskCheck = diskCheck ?? (() => {
       const fs = statfsSync(dirname(this.path));
       const unsupported = new Set([0x6969, 0x517b, 0xff534d42]); // NFS, SMB, CIFS
-      if (unsupported.has(fs.type)) return false;
+      if (unsupported.has(fs.type)) { this.diskSafetyReason = 'unsupported_filesystem'; return false; }
       let bytes = 0;
       for (const suffix of ['', '-wal', '-shm', '.owner']) { try { bytes += statSync(this.path + suffix).size; } catch (e) { if (e.code !== 'ENOENT') throw e; } }
-      return fs.bavail * fs.bsize >= this.limits.min_free_bytes && bytes < this.limits.max_disk_bytes;
+      this.diskSafetyReason = fs.bavail * fs.bsize < this.limits.min_free_bytes ? 'disk_space_low' : bytes >= this.limits.max_disk_bytes ? 'database_size_limit' : null;
+      return this.diskSafetyReason === null;
     });
     try {
       // Separate SQLite advisory owner DB gives a kernel lock released even after SIGKILL.
@@ -84,6 +87,7 @@ export class BrokerStore {
       if(deferMigration) { this.closed=false; return; }
       this.initialize();
     } catch (e) {
+      log(this.logger, 'error', 'PSST_STORAGE_STARTUP_FAILED', {phase:'startup'}, e);
       try { this.db?.close(); } catch {}
       try { this.owner?.close(); } catch {}
       throw e;
@@ -97,6 +101,7 @@ export class BrokerStore {
         this.db.exec("UPDATE messages SET state='queued', claim_id=NULL, claim_epoch=NULL, claim_until=NULL WHERE state='claimed';");
       });
       this.closed = false;
+      log(this.logger, 'info', 'PSST_STORAGE_READY', {phase:'startup'});
   }
   migrate() {
     const version = this.db.prepare('PRAGMA user_version').get().user_version;
@@ -145,6 +150,15 @@ export class BrokerStore {
       COMMIT;`);
     this.db.exec('BEGIN IMMEDIATE');
     try{
+      // Preserve normalization of omitted TTLs across later runtime Settings
+      // changes. Existing receipts keep the startup default they used before
+      // Settings existed; never overwrite a previously recorded default.
+      this.db.exec(`CREATE TABLE IF NOT EXISTS send_defaults (
+        principal TEXT NOT NULL, sender TEXT NOT NULL, key TEXT NOT NULL,
+        default_ttl INTEGER NOT NULL, PRIMARY KEY(principal,sender,key),
+        FOREIGN KEY(principal,sender,key) REFERENCES sends(principal,sender,key) ON DELETE CASCADE)`);
+      this.db.prepare(`INSERT OR IGNORE INTO send_defaults
+        SELECT principal,sender,key,? FROM sends`).run(this.limits.default_ttl_seconds);
       if(!this.db.prepare('PRAGMA table_info(messages)').all().some(c=>c.name==='claim_prior_uncertain'))this.db.exec('ALTER TABLE messages ADD COLUMN claim_prior_uncertain INTEGER NOT NULL DEFAULT 0');
       for(const [name,type] of [['resent_from','TEXT'],['cancelled_at','INTEGER']]){
         if(!this.db.prepare('PRAGMA table_info(messages)').all().some(c=>c.name===name))this.db.exec(`ALTER TABLE messages ADD COLUMN ${name} ${type}`);
@@ -171,28 +185,87 @@ export class BrokerStore {
       if(this.requireRegistrationV2) this.db.exec('UPDATE registration_control SET enforced=1 WHERE id=1');
       if(this.limits.session_retention_seconds && !this.db.prepare('SELECT enforced FROM registration_control WHERE id=1').get().enforced) throw new Error('Session cleanup requires explicit registration v2 enforcement.');
       this.db.exec('PRAGMA user_version=5; COMMIT');
-    }catch(e){this.db.exec('ROLLBACK');throw e;}
+    }catch(e){
+      // Startup must retain the first cause even when SQLite already aborted.
+      if(this.db.isTransaction)try{this.db.exec('ROLLBACK');}catch(rollbackError){log(this.logger,'error','PSST_STORAGE_ROLLBACK_FAILED',{phase:'rollback',operation:'startup',transaction_active:this.db.isTransaction},rollbackError);}
+      throw e;
+    }
+  }
+  // Lifecycle records are held until the owning transaction has a known success.
+  diagnostic(level, event, fields = {}) {
+    if (this.pendingDiagnostics) this.pendingDiagnostics.push([level, event, fields]);
   }
   tx(fn) {
     if (!this.safe()) fail(503, 'storage_unavailable', null, { retryable: true });
-    this.db.exec('BEGIN IMMEDIATE');
-    let committed = false, commitAttempted = false, rollbackConfirmed = false;
+    let committed = false, commitAttempted = false, rollbackConfirmed = false, began = false;
+    let phase = 'begin';
+    const diagnostics = [];
     try {
+      this.fault('before_begin');
+      this.db.exec('BEGIN IMMEDIATE');
+      began = true;
+      this.pendingDiagnostics = diagnostics;
+      phase = 'statement';
       const result = fn();
+      phase = 'before_commit';
       this.fault('before_commit');
+      phase = 'commit';
       commitAttempted = true;
       this.fault('commit_attempt');
       this.db.exec('COMMIT');
       committed = true;
+      phase = 'after_commit';
       this.fault('after_commit');
+      this.pendingDiagnostics = null;
+      log(this.logger, 'debug', 'PSST_STORAGE_TRANSACTION_COMMITTED', {phase:'commit', committed:true});
+      for (const [level, event, fields] of diagnostics) log(this.logger, level, event, fields);
       return result;
     } catch (error) {
-      if (!committed) { try { this.fault('before_rollback'); this.db.exec('ROLLBACK'); rollbackConfirmed = true; } catch { this.poisoned = true; } }
-      if (error instanceof ApiError) throw error;
-      throw new ApiError(503, 'storage_unavailable', null, { retryable: true, effect: committed || !rollbackConfirmed ? 'unknown' : 'not_applied' });
+      this.pendingDiagnostics = null;
+      if (!committed) {
+        // SQLITE_FULL and some I/O errors abort the transaction themselves. An
+        // inactive transaction proves rollback only before a commit attempt.
+        if (!this.db.isTransaction) {
+          rollbackConfirmed = !commitAttempted;
+          if (began && rollbackConfirmed) log(this.logger, 'debug', 'PSST_STORAGE_ROLLBACK_CONFIRMED', {phase, reason:'automatic_rollback', rollback_confirmed:true});
+        }
+        else if (began) {
+          try {
+            this.fault('before_rollback');
+            this.db.exec('ROLLBACK');
+            rollbackConfirmed = true;
+            log(this.logger, 'debug', 'PSST_STORAGE_ROLLBACK_CONFIRMED', {phase, rollback_confirmed: true});
+          } catch (rollbackError) {
+            this.poisoned = true;
+            log(this.logger, 'error', 'PSST_STORAGE_ROLLBACK_FAILED', {phase: 'rollback', poisoned: true, transaction_active: this.db.isTransaction}, rollbackError);
+          }
+        } else this.poisoned = true;
+      }
+      const effect = committed || !rollbackConfirmed ? 'unknown' : 'not_applied';
+      const rejected = error instanceof ApiError && effect === 'not_applied' && error.status < 500;
+      log(this.logger, rejected ? 'warning' : 'error', rejected ? 'PSST_STORAGE_OPERATION_REJECTED' : 'PSST_STORAGE_TRANSACTION_FAILED', {
+        phase, code: error instanceof ApiError ? error.code : 'storage_unavailable',
+        committed, commit_attempted: commitAttempted, rollback_confirmed: rollbackConfirmed, poisoned: !!this.poisoned,
+        transaction_active: this.db.isTransaction, effect, retryable: rejected ? error.retryable : true,
+      }, error);
+      if (error instanceof ApiError && effect === 'not_applied') throw error;
+      throw new ApiError(503, 'storage_unavailable', null, { retryable: true, effect });
     }
   }
-  safe() { try { return !this.closed && !this.poisoned && this.diskCheck(); } catch { return false; } }
+  safe() {
+    let reason = null, error;
+    try {
+      if (this.closed) reason = 'store_closed';
+      else if (this.poisoned) reason = 'store_poisoned';
+      else if (!this.diskCheck()) reason = this.diskSafetyReason ?? 'disk_check_failed';
+    } catch (failure) { reason = 'disk_check_error'; error = failure; }
+    if (reason !== this.lastSafetyReason) {
+      if (reason) log(this.logger, 'error', 'PSST_STORAGE_UNAVAILABLE', {reason}, error);
+      else if (this.lastSafetyReason) log(this.logger, 'info', 'PSST_STORAGE_RECOVERED');
+      this.lastSafetyReason = reason;
+    }
+    return reason === null;
+  }
   close() { if (this.closed) return; this.closed = true; this.db.close(); this.owner.close(); }
   async backup(destination) {
     if (this.closed) throw new Error('Broker store is closed.');
@@ -248,6 +321,7 @@ export class BrokerStore {
       this.db.prepare("UPDATE messages SET state='queued',claim_id=NULL,claim_epoch=NULL,claim_until=NULL WHERE recipient=? AND state='claimed'").run(b.client_id);
       const result = this.registrationResult(this.own(auth,b.client_id));
       this.db.prepare('INSERT INTO registrations VALUES(?,?,?,?,?)').run(b.client_id,b.connection_id,request,canonical(result),now);
+      this.diagnostic('info', 'PSST_CLIENT_CONNECTED', {client_id: b.client_id, epoch});
       return result;
     });
   }
@@ -259,6 +333,7 @@ export class BrokerStore {
     this.live(auth,id,epoch);
     const now = this.clock(), until = now + this.limits.lease_seconds*1000;
     this.db.prepare('UPDATE sessions SET lease_until=?,heartbeat_at=?,credential=?,disconnected_since=NULL WHERE id=?').run(until,now,auth.credential_id,id);
+    this.diagnostic('debug', 'PSST_CLIENT_HEARTBEAT', {client_id:id, epoch});
     return {client_id:id,lease_epoch:epoch,lease_expires_at:iso(until),server_time:iso(now)};
   }); }
   disconnect(auth, id, epoch) { return this.tx(() => {
@@ -274,6 +349,7 @@ export class BrokerStore {
     // already marked epoch preserves it; an ordinary expired lease gains none.
     if(s.lease_until>now)this.db.prepare('INSERT INTO session_disconnects(session,epoch) VALUES(?,?) ON CONFLICT(session) DO UPDATE SET epoch=excluded.epoch').run(id,epoch);
     this.sweepInternal();
+    if (s.lease_until > now) this.diagnostic('info', 'PSST_CLIENT_DISCONNECTED', {client_id:id, epoch, reason:'explicit_disconnect'});
     return {client_id:id,lease_epoch:epoch,...presenceSnapshot(this.own(auth,id),now),server_time:iso(now)};
   }); }
   patch(s, b) {
@@ -297,13 +373,17 @@ export class BrokerStore {
       } else this.live(auth,id,epoch);
       this.db.prepare('DELETE FROM session_disconnects WHERE session=?').run(id);
       this.db.prepare('UPDATE sessions SET closed=1,lease_until=0 WHERE id=?').run(id);
+      this.diagnostic('info', 'PSST_CLIENT_CLOSED', {client_id:id, epoch});
       this.db.prepare("UPDATE messages SET state='failed',reason='recipient_closed',terminal_at=? WHERE recipient=? AND state IN ('queued','claimed')").run(this.clock(),id);
     } else if (s.epoch!==epoch) fail(409,'stale_lease_epoch');
     return {client_id:id,closed:true,server_time:iso(this.clock())};
   }); }
   revoke(credentials) {
     if (!credentials.length) return;
-    this.tx(()=>{for(const id of credentials) this.db.prepare('UPDATE sessions SET disconnected_since=coalesce(disconnected_since,?),lease_until=0 WHERE credential=?').run(this.clock(),id);});
+    this.tx(()=>{for(const id of credentials) {
+      const result=this.db.prepare('UPDATE sessions SET disconnected_since=coalesce(disconnected_since,?),lease_until=0 WHERE credential=?').run(this.clock(),id);
+      if(result.changes) this.diagnostic('info', 'PSST_CLIENTS_DISCONNECTED', {count:result.changes, reason:'revoked'});
+    }});
   }
   applyAuthorizationPolicies(entries) {
     this.tx(()=>{
@@ -311,7 +391,10 @@ export class BrokerStore {
         const active=entries.filter(c=>c.principal_id===s.principal&&c.adapter_id===s.adapter&&c.client_types.includes(s.type));
         // Policy reload may remove access, but never silently grants a session new scopes.
         const scopes=parse(s.scopes).filter(scope=>active.some(c=>c.scopes.includes(scope)));
-        if(canonical(scopes)!==s.scopes)this.db.prepare('UPDATE sessions SET scopes=?,disconnected_since=coalesce(disconnected_since,?),lease_until=0 WHERE id=?').run(canonical(scopes),this.clock(),s.id);
+        if(canonical(scopes)!==s.scopes) {
+          this.db.prepare('UPDATE sessions SET scopes=?,disconnected_since=coalesce(disconnected_since,?),lease_until=0 WHERE id=?').run(canonical(scopes),this.clock(),s.id);
+          this.diagnostic('info', 'PSST_CLIENT_DISCONNECTED', {client_id:s.id, reason:'policy'});
+        }
       }
     });
   }
@@ -337,6 +420,10 @@ export class BrokerStore {
     if(tokens<1) fail(429,'rate_limited',null,{retryable:true,retry_after:Math.ceil((1-tokens)*60/perMinute)});
     this.db.prepare('INSERT INTO rates VALUES(?,?,?) ON CONFLICT(id) DO UPDATE SET tokens=excluded.tokens,updated=excluded.updated').run(id,tokens-1,now);
   }
+  sendLimits(auth,id,key) {
+    const prior=this.db.prepare('SELECT default_ttl FROM send_defaults WHERE principal=? AND sender=? AND key=?').get(auth.principal_id,id,key);
+    return prior ? {...this.limits,default_ttl_seconds:prior.default_ttl} : this.limits;
+  }
   sendReplay(auth,id,key,request) {
     const existing=this.db.prepare('SELECT * FROM sends WHERE principal=? AND sender=? AND key=?').get(auth.principal_id,id,key);
     if(existing){
@@ -350,7 +437,8 @@ export class BrokerStore {
     return this.tx(()=>this.acceptSend(auth,id,epoch,key,input));
   }
   resend(auth,id,epoch,key,message,input) {
-    const options=validateResend(input,{limits:this.limits});validateIdempotencyKey(key);
+    validateIdempotencyKey(key);
+    const options=validateResend(input,{limits:this.sendLimits(auth,id,key)});
     const request=canonical({operation:'resend',message_id:message,...options});
     return this.tx(()=>{
       this.live(auth,id,epoch);
@@ -373,11 +461,13 @@ export class BrokerStore {
         this.db.prepare("UPDATE messages SET state='cancelled',reason='sender_cancelled',cancelled_at=?,terminal_at=? WHERE id=?").run(this.clock(),this.clock(),message);
       }
       m=this.ownedMessage(auth,id,message);
+      this.diagnostic('debug', 'PSST_MESSAGE_CANCEL_RESULT', {message_id:message, state:m.state});
       return {...this.receiptRow(m),cancel_result:m.state==='cancelled'?'cancelled':m.state==='delivered'?'already_delivered':'already_terminal',further_delivery_stopped:true,delivery_may_have_occurred:m.state==='delivered'||!!m.uncertain};
     });
   }
   acceptSend(auth,id,epoch,key,input,{request:operationRequest,resentFrom}={}) {
-    const b=validateSend(input,{limits:this.limits}); validateIdempotencyKey(key);
+    validateIdempotencyKey(key);
+    const limits=this.sendLimits(auth,id,key), b=validateSend(input,{limits});
     const request=operationRequest??canonical(b);
       let sender=this.live(auth,id,epoch);
       const replay=this.sendReplay(auth,id,key,request);if(replay)return replay;
@@ -403,6 +493,8 @@ export class BrokerStore {
       this.db.prepare("INSERT INTO messages(id,sender,recipient,scope,sequence,envelope,bytes,state,accepted,expires,resent_from) VALUES(?,?,?,?,?,?,?,'queued',?,?,?)").run(messageId,id,recipient.id,scope,sequence,canonical(envelope),bytes,now,expires,resentFrom??null);
       const result={message_id:messageId,recipient_sequence:sequence,delivery_state:'queued',recipient_connected_at_acceptance:recipient.lease_until>now,expires_at:iso(expires),status_url:`/v1/messages/${messageId}`,server_time:iso(now),...(resentFrom?{resent_from_message_id:resentFrom}:{})};
       this.db.prepare('INSERT INTO sends VALUES(?,?,?,?,?,?,?)').run(auth.principal_id,id,key,sender.registration_version === 2 ? `sha256:${digest(request)}` : request,messageId,scope,canonical(result));
+      this.db.prepare('INSERT INTO send_defaults VALUES(?,?,?,?)').run(auth.principal_id,id,key,limits.default_ttl_seconds);
+      this.diagnostic('debug', 'PSST_MESSAGE_ACCEPTED', {message_id:messageId, client_id:id, state:'queued', operation:resentFrom?'resend':'send'});
       return result;
   }
   receiptRow(m) {return {message_id:m.id,recipient_id:m.recipient,recipient_sequence:m.sequence,delivery_state:m.state,attempt_count:m.attempts,reason:m.reason,delivery_uncertain:!!m.uncertain,accepted_at:iso(m.accepted),expires_at:iso(m.expires),claimed_at:m.claimed_at===null?null:iso(m.claimed_at),delivered_at:m.delivered_at===null?null:iso(m.delivered_at),terminal_at:m.terminal_at===null?null:iso(m.terminal_at),server_time:iso(this.clock()),...(m.resent_from?{resent_from_message_id:m.resent_from}:{}),...(m.cancelled_at!==null&&m.cancelled_at!==undefined?{cancelled_at:iso(m.cancelled_at)}:{})};}
@@ -486,8 +578,10 @@ export class BrokerStore {
   }
   sweepInternal(batch=100) {
     const now=this.clock();
-    this.db.prepare("UPDATE messages SET state='expired',reason='ttl_expired',terminal_at=? WHERE id IN (SELECT id FROM messages WHERE state IN ('queued','claimed') AND expires<=? LIMIT ?)").run(now,now,batch);
-    this.db.prepare("UPDATE messages SET state=CASE WHEN attempts>=? THEN 'failed' ELSE 'queued' END,reason=CASE WHEN attempts>=? THEN 'attempts_exhausted' ELSE NULL END,terminal_at=CASE WHEN attempts>=? THEN ? ELSE NULL END,claim_id=NULL,claim_epoch=NULL,claim_until=NULL WHERE id IN (SELECT m.id FROM messages m JOIN sessions s ON s.id=m.recipient WHERE m.state='claimed' AND (m.claim_until<=? OR s.lease_until<=? OR m.claim_epoch!=s.epoch) LIMIT ?)").run(this.limits.max_attempts,this.limits.max_attempts,this.limits.max_attempts,now,now,now,batch);
+    const expired = this.db.prepare("UPDATE messages SET state='expired',reason='ttl_expired',terminal_at=? WHERE id IN (SELECT id FROM messages WHERE state IN ('queued','claimed') AND expires<=? LIMIT ?)").run(now,now,batch);
+    if (expired.changes) this.diagnostic('debug', 'PSST_MESSAGES_EXPIRED', {count:expired.changes, reason:'ttl_expired'});
+    const released = this.db.prepare("UPDATE messages SET state=CASE WHEN attempts>=? THEN 'failed' ELSE 'queued' END,reason=CASE WHEN attempts>=? THEN 'attempts_exhausted' ELSE NULL END,terminal_at=CASE WHEN attempts>=? THEN ? ELSE NULL END,claim_id=NULL,claim_epoch=NULL,claim_until=NULL WHERE id IN (SELECT m.id FROM messages m JOIN sessions s ON s.id=m.recipient WHERE m.state='claimed' AND (m.claim_until<=? OR s.lease_until<=? OR m.claim_epoch!=s.epoch) LIMIT ?)").run(this.limits.max_attempts,this.limits.max_attempts,this.limits.max_attempts,now,now,now,batch);
+    if (released.changes) this.diagnostic('debug', 'PSST_MESSAGE_CLAIMS_RELEASED', {count:released.changes, reason:'expired'});
     const old=this.db.prepare('SELECT id FROM messages WHERE terminal_at IS NOT NULL AND terminal_at<=? AND expires<=? LIMIT ?').all(now-this.limits.retention_seconds*1000,now-this.limits.retry_window_seconds*1000,batch);
     for(const m of old){
       this.db.prepare('DELETE FROM sends WHERE message=?').run(m.id);this.db.prepare('DELETE FROM messages WHERE id=?').run(m.id);
@@ -520,6 +614,7 @@ export class BrokerStore {
       db.prepare('DELETE FROM presence_events WHERE sender=? OR recipient=?').run(id,id);
       db.prepare('DELETE FROM rates WHERE id=?').run(`sender:${id}`);
       db.prepare('DELETE FROM sessions WHERE id=?').run(id);
+      this.diagnostic('debug', 'PSST_CLIENT_RETIRED', {client_id:id, reason:'retention_elapsed'});
     }
     // Remove revisions without peer records immediately; later message cleanup
     // handles the remaining bounded records even if retirement is disabled.
@@ -556,6 +651,7 @@ export class BrokerStore {
       const result={envelope:parse(head.envelope),claim_id:claimId,lease_epoch:epoch,attempt:head.attempts+1,claim_expires_at:iso(until)};
       this.db.prepare("UPDATE messages SET state='claimed',claim_id=?,claim_epoch=?,claim_until=?,attempts=attempts+1,claim_prior_uncertain=uncertain,uncertain=1,claimed_at=? WHERE id=?").run(claimId,epoch,until,now,head.id);
       this.db.prepare('INSERT INTO claims VALUES(?,?,?,?,?,?)').run(id,epoch,key,request,canonical(result),now);
+      this.diagnostic('debug', 'PSST_MESSAGE_CLAIMED', {message_id:head.id, client_id:id, epoch});
       return result;
     });
   }
@@ -570,6 +666,7 @@ export class BrokerStore {
   renew(auth,id,epoch,message,input){const b=validateRenew(input);return this.tx(()=>{
     const m=this.currentClaim(auth,id,epoch,message,b.claim_id),until=Math.min(m.expires,this.clock()+this.limits.claim_seconds*1000);
     this.db.prepare('UPDATE messages SET claim_until=? WHERE id=?').run(until,message);
+    this.diagnostic('debug', 'PSST_MESSAGE_CLAIM_RENEWED', {message_id:message, client_id:id, epoch});
     return {claim_id:b.claim_id,lease_epoch:epoch,claim_expires_at:iso(until)};
   });}
   complete(auth,id,epoch,message,input){const b=validateCompletion(input),request=canonical(b);return this.tx(()=>{
@@ -588,6 +685,7 @@ export class BrokerStore {
     this.db.prepare('UPDATE messages SET state=?,reason=?,uncertain=?,delivered_at=?,terminal_at=?,claim_id=NULL,claim_epoch=NULL,claim_until=NULL WHERE id=?').run(state,reason,uncertain,state==='delivered'?now:null,terminal(state)?now:null,message);
     const result=this.receiptRow(this.db.prepare('SELECT * FROM messages WHERE id=?').get(message));
     this.db.prepare('INSERT INTO completions VALUES(?,?,?,?,?,?,?)').run(b.claim_id,id,epoch,message,request,canonical(result),now);
+    this.diagnostic('debug', 'PSST_MESSAGE_COMPLETED', {message_id:message, client_id:id, epoch, state});
     return result;
   });}
 }

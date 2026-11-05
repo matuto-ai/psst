@@ -19,9 +19,10 @@ test('startup environment seam validates defaults and explicit settings before c
 });
 test('Compose forwards lifetime to the normal entrypoint using the validated environment seam',()=>{
  const compose=readFileSync(new URL('../compose.yaml',import.meta.url),'utf8');
- assert.match(compose,/PSST_AUTHORIZATION_DAYS: \$\{PSST_AUTHORIZATION_DAYS:-90\}/);
+ assert.match(compose,/      - PSST_AUTHORIZATION_DAYS\n/);
+ assert.doesNotMatch(compose,/PSST_AUTHORIZATION_DAYS:-90/);
  const main=readFileSync(new URL('../src/main.mjs',import.meta.url),'utf8');
  assert.ok(main.indexOf('approvalOptionsFromEnvironment(process.env)')<main.indexOf('await BrokerStore.open'));
- assert.match(main,/ApprovalService\.create\(\{store,\.\.\.approvalOptions\}\)/);
+ assert.match(main,/ApprovalService\.create\(\{store,\.\.\.approvalOptions,settings\}\)/);
  assert.match(readFileSync(new URL('../Containerfile',import.meta.url),'utf8'),/CMD \["node", "src\/main.mjs"\]/);
 });
