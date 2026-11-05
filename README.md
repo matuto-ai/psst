@@ -7,7 +7,7 @@ See the [technical-name inventory and migration/rollback plan](docs/branding-mig
 
 A generic, authenticated LAN message broker for independent AI CLI sessions. It owns the recipient registry, background presence, and durable **message delivery**—not conversations, tasks, model progress, or agent orchestration.
 
-**Status: pre-1.0 development.** The broker implementation, reference adapter and local stdio facade are on `main`. Version 0.7.1 is a source candidate until its release workflow succeeds. Native Pi, Antigravity CLI, Claude Code and OpenCode installation and receiving behavior must be validated separately; protocol fixtures and CI are not evidence of acceptance in a user environment.
+**Status: pre-1.0 development.** The broker implementation, reference adapter and local stdio facade are on `main`. Version 0.7.2 is a source candidate until its release workflow succeeds. Native Pi, Antigravity CLI, Claude Code and OpenCode installation and receiving behavior must be validated separately; protocol fixtures and CI are not evidence of acceptance in a user environment.
 
 ## Docker server
 
@@ -17,12 +17,16 @@ Use the [Docker image / Compose and release guide](docs/docker-release.md). The 
 
 Native setup asks only for the broker URL, followed by approval in the broker administration page. See [URL-only setup](docs/approval-operator.md) and the [approval contract](docs/approval-protocol.md). This flow is available since broker 0.4.0 and requires a compatible connector; it is not present in broker 0.3.0. Existing legacy bundles and ticket pairing remain compatible. Native automatic-receive acceptance is separate from the unit suite.
 
-## 0.7.1 source candidate
+## 0.7.2 source candidate
 
-This patch removes the administration brand link's hover underline while
-preserving navigation and visible keyboard focus. It does not change database
-schema, authorization lifetime or transport behavior.
-See [0.7.1 changes and compatibility](CHANGELOG.md#071-upgrade-notes).
+This patch adds private structured diagnostics, persistent administrator Settings
+for log level and distinct future expiration durations, and a correction for
+SQLite automatic rollback after a statement failure. It preserves exact
+omitted-TTL replay across later Settings changes and restarts. The isolated
+SQLite defect is not an established cause of any past live incident.
+Existing grants, expiry timestamps, transport and retention policies remain
+unchanged. See [diagnostics and Settings](docs/logging-settings.md).
+See [0.7.2 changes and compatibility](CHANGELOG.md#072-upgrade-notes).
 Source preparation does not publish a release/image or activate a deployment.
 
 ## Optional session retention
