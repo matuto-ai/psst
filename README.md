@@ -78,3 +78,11 @@ No release, deployment, host configuration change, or production credential is i
 
 The optional MCP facade is local stdio/tools-only, with no Channel push, remote MCP listener, permission relay, or claimed native-host certification.
 
+
+## Diagnostics and Settings
+
+The source includes English structured stderr diagnostics with safe error codes
+and request correlation, plus authenticated **Settings** for log level and
+distinct future expiration durations. See [operator guidance](docs/logging-settings.md)
+for privacy, precedence, bounds, replay compatibility and recovery. This source
+change is not a new image release or a deployment.

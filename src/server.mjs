@@ -3,19 +3,21 @@ import https from 'node:https';
 import { readFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
+import { log, nullLogger, FailureTracker, withLogContext, normalizedRoute } from './logger.mjs';
 import { ApiError, validateEmpty, validateUuid, validateClaim } from './protocol.mjs';
 
 export const isLoopback = host => ['127.0.0.1','::1','localhost'].includes(host);
-export function createBrokerServer({ store, auth, enrollment, approval, admin, reservations=()=>[], host='127.0.0.1', port=8787, insecureDevelopment=false, proxyLoopback=false, proxyTransport=false, tls, pollIntervalMs=250, maxPolls=1000, requestRate=1200 }) {
+export function createBrokerServer({ store, auth, enrollment, approval, admin, reservations=()=>[], host='127.0.0.1', port=8787, insecureDevelopment=false, proxyLoopback=false, proxyTransport=false, tls, pollIntervalMs=250, maxPolls=1000, requestRate=1200, logger=store?.logger??nullLogger }) {
   if([insecureDevelopment,proxyLoopback,proxyTransport].some(value=>typeof value!=='boolean'))throw new Error('Transport modes must be booleans.');
   if(Number(insecureDevelopment)+Number(proxyLoopback)+Number(proxyTransport)+Number(Boolean(tls))>1)throw new Error('Select exactly one TLS or explicit plaintext transport mode.');
   if(!tls&&!proxyTransport&&(!isLoopback(host)||(!insecureDevelopment&&!proxyLoopback)))throw new Error('Verified TLS is required; plaintext needs an explicit transport mode.');
   if(proxyLoopback&&!isLoopback(host))throw new Error('Loopback proxy mode is loopback-only.');
   if(insecureDevelopment&&!isLoopback(host))throw new Error('Insecure development is loopback-only.');
   if(tls&&(!tls.certFile||!tls.keyFile))throw new Error('Both TLS certificate and key files are required.');
+  const failures=new FailureTracker(logger);let lastReady;
   const polls=new Map(),peers=new Map();let stopping=false,globalWindow={at:Date.now(),count:0};
   const reply=(res,status,value,headers={})=>{if(res.destroyed||res.writableEnded)return;res.writeHead(status,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store','X-Content-Type-Options':'nosniff',...headers});res.end(status===204?undefined:JSON.stringify(value));};
-  const error=(res,e,id)=>{const known=e instanceof ApiError?e:new ApiError(503,'storage_unavailable',null,{retryable:true,effect:'unknown'});reply(res,known.status,known.toJSON(id),{'X-Request-ID':id,...(known.retry_after?{'Retry-After':String(known.retry_after)}:{})});};
+  const error=(res,e,id)=>{const known=e instanceof ApiError?e:new ApiError(503,'storage_unavailable',null,{retryable:true,effect:'unknown'});log(logger,known.status>=500?'error':known.status>=400?'warning':'debug','PSST_HTTP_REQUEST_FAILED',{request_id:id,status:known.status,code:known.code,effect:known.effect,retryable:known.retryable},e);reply(res,known.status,known.toJSON(id),{'X-Request-ID':id,...(known.retry_after?{'Retry-After':String(known.retry_after)}:{})});};
   function guardPeer(req,enrollmentOnly=false){
     const now=Date.now(),key=(req.socket.remoteAddress??'unknown')+(enrollmentOnly?':enrollment':'');
     if(!enrollmentOnly){
@@ -42,14 +44,17 @@ export function createBrokerServer({ store, auth, enrollment, approval, admin, r
     try{return JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(Buffer.concat(parts)));}catch{throw new ApiError(400,'invalid_request','body');}
   }
   async function handler(req,res){
-    const requestId=randomUUID();res.setHeader('X-Request-ID',requestId);
+    const requestId=randomUUID(),started=Date.now();res.setHeader('X-Request-ID',requestId);
+    return withLogContext({request_id:requestId,method:req.method,route:normalizedRoute(req.url)},async()=>{
+    log(logger,'debug','PSST_HTTP_REQUEST_STARTED');
     try{
       guardPeer(req);
       const url=new URL(req.url,'http://broker.invalid');
       if(req.method==='GET'&&url.pathname==='/healthz')return reply(res,200,{status:'ok'});
       if(req.method==='GET'&&url.pathname==='/readyz'){
-        try{auth.reload();}catch{}
-        return reply(res,!stopping&&auth.ready&&store.safe()?200:503,{status:!stopping&&auth.ready&&store.safe()?'ready':'not_ready'});
+        reloadCredentials();
+        const ready=readiness();
+        return reply(res,ready?200:503,{status:ready?'ready':'not_ready'});
       }
       if(admin&&req.method==='GET'&&url.pathname==='/'&&!url.search){res.writeHead(303,{Location:'/admin','Cache-Control':'no-store'});res.end();return;}
       if(admin && url.pathname.startsWith('/admin')){
@@ -145,14 +150,32 @@ export function createBrokerServer({ store, auth, enrollment, approval, admin, r
       if(mailbox&&req.method==='POST'){mailbox[1]=validateUuid(mailbox[1],'path.message_id');return reply(res,200,store[mailbox[2]](principal,id,epoch,mailbox[1],await body(req)));}
       throw new ApiError(404,'recipient_not_found');
     }catch(e){error(res,e,requestId);}
+    finally{log(logger,'debug','PSST_HTTP_REQUEST_FINISHED',{status:res.statusCode,duration_ms:Date.now()-started});}
+    });
+  }
+  function reloadCredentials(){
+    try{auth.reload();failures.recover('auth','PSST_AUTH_MAINTENANCE_RECOVERED',{operation:'reload'});return true;}
+    catch(e){failures.fail('auth','PSST_AUTH_MAINTENANCE_FAILED',{operation:'reload'},e);return false;}
+  }
+  function readiness(){
+    const ready=!stopping&&auth.ready&&store.safe();
+    if(ready!==lastReady){log(logger,ready?'info':'warning','PSST_READINESS_CHANGED',{ready,reason:stopping?'stopping':!auth.ready?'no_credentials':ready?'ready':'storage_guard'});lastReady=ready;}
+    return ready;
+  }
+  function maintenance(){
+    reloadCredentials();
+    // Credential reload failures must not starve safe expiration/cleanup work.
+    try{store.sweep();failures.recover('sweep','PSST_MAINTENANCE_RECOVERED',{operation:'sweep'});}
+    catch(e){failures.fail('sweep','PSST_MAINTENANCE_FAILED',{operation:'sweep'},e);}
+    readiness();
   }
   const server=tls?https.createServer({cert:readFileSync(tls.certFile),key:readFileSync(tls.keyFile),minVersion:'TLSv1.2'},handler):http.createServer(handler);
   server.requestTimeout=10000;server.headersTimeout=10000;server.keepAliveTimeout=5000;server.maxHeadersCount=64;server.maxConnections=1024;server.maxRequestsPerSocket=1000;
-  server.on('clientError',(_err,socket)=>{if(socket.writable)socket.end('HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n');});
+  server.on('clientError',(err,socket)=>{log(logger,'warning','PSST_HTTP_CLIENT_ERROR',{operation:'client'},err);if(socket.writable)socket.end('HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n');});
   let sweep;
   return {
-    server, polls,
-    async listen(){await new Promise((resolve,reject)=>{server.once('error',reject);server.listen(port,host,()=>{server.removeListener('error',reject);resolve();});});sweep=setInterval(()=>{try{auth.reload();store.sweep();}catch{}},1000);sweep.unref();return server.address();},
-    async close(){stopping=true;clearInterval(sweep);for(const res of polls.values())error(res,new ApiError(503,'not_ready',null,{retryable:true}),randomUUID());await new Promise(resolve=>{const timer=setTimeout(()=>server.closeAllConnections(),2000);timer.unref();server.close(()=>{clearTimeout(timer);resolve();});});server.closeAllConnections();},
+    server, polls, handler, maintenance,
+    async listen(){await new Promise((resolve,reject)=>{server.once('error',reject);server.listen(port,host,()=>{server.removeListener('error',reject);resolve();});});sweep=setInterval(maintenance,1000);sweep.unref();log(logger,'info','PSST_SERVER_LISTENING');readiness();return server.address();},
+    async close(){stopping=true;log(logger,'info','PSST_SERVER_STOPPING');readiness();clearInterval(sweep);for(const res of polls.values())error(res,new ApiError(503,'not_ready',null,{retryable:true}),randomUUID());await new Promise(resolve=>{const timer=setTimeout(()=>server.closeAllConnections(),2000);timer.unref();server.close(()=>{clearTimeout(timer);resolve();});});server.closeAllConnections();log(logger,'info','PSST_SERVER_STOPPED');},
   };
 }

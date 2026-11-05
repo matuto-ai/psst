@@ -35,6 +35,7 @@ Set `BROKER_CONFIG_FILE` to a private JSON file. Do not put tokens in CLI argume
 | `proxy_loopback` | Explicit same-host TLS-proxy upstream exception; loopback only; authentication remains mandatory |
 | `proxy_transport` | Explicit isolated same-host container upstream for an external HTTPS proxy; permits container-interface HTTP, never disables API auth or trusts forwarded identity |
 | `tls.certFile`, `tls.keyFile` | Existing TLS certificate chain and key files for direct HTTPS |
+| `settings` | Validated log level and future expiration controls; see [Settings](logging-settings.md) |
 | `limits` | Finite storage, rate, lease and protocol policy overrides; unknown keys fail startup |
 
 Start with one of `deploy/config.*.example.json`; replace paths in a **private copy**, never in the repository. The `0.0.0.0` listener in the direct-TLS container template is inside its isolated network namespace; host publication must still select one explicit LAN interface. The development and `proxy_loopback` templates bind loopback. The container proxy template explicitly binds its container interface; keep that plaintext backend on an isolated trusted same-host proxy path. Never publish it directly to the LAN/Internet. Transport modes are mutually exclusive and must be booleans.
@@ -135,3 +136,11 @@ For coordinated restore, quiesce new work and retain matching broker and adapter
 Protocol overrides may narrow the wire limits, not enlarge them. Retention must remain at least seven days, registration retry records at least 24 hours, and the lease at least three heartbeat intervals. Database directories must be private (0700) and operator-owned. Scope/type reductions in the verifier file fence affected leases and remove former-scope discovery/send access; a reload never silently grants an existing session new scopes.
 
 Docker and Podman have matching `.dockerignore`/`.containerignore` rules. Keep real config, verifiers, tokens, TLS keys, databases and backups outside the checkout/build context regardless; ignore rules are a second layer, not a secret-management system. Current CI is unit-only; [verification](verification.md) explains its scope and the historical evidence boundary.
+
+## Structured diagnostics and runtime preferences
+
+See [Diagnostics and Settings](logging-settings.md) for English JSON stderr logs,
+stable codes, safe stack locations, request correlation, threshold controls,
+persistent expiration settings and the SQLite automatic-rollback correction.
+Preserve the first failure and request ID before restarting; the isolated defect
+does not establish the cause of a live incident.

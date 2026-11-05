@@ -174,3 +174,11 @@ the grant. All four shared-helper client types consume the same finite
 `expires_at` value; no receipt-format or connector configuration change is needed.
 Local receipt validity is not proof that a grant has not been revoked: the broker
 enforces revocation immediately on authenticated API access.
+
+## Settings page
+
+Authorization lifetime can also be set in the authenticated Settings page when
+not locked by the deployment environment/private configuration. Pending requests
+default to 24 hours and can be shortened to 1–24 hours for future requests.
+See [Settings](logging-settings.md) for precedence, future-only effects and the
+distinct administrator/message clocks. Existing grants/requests are unchanged.
