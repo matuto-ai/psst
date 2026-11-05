@@ -62,7 +62,7 @@ export function diagnostic(error) {
     return info;
   } catch { return { reason: 'diagnostic_unavailable' }; }
 }
-export function withLogContext(fields, fn) { return context.run(safeFields(fields), fn); }
+export function withLogContext(fields, fn) { return context.run({ ...context.getStore(), ...safeFields(fields) }, fn); }
 export const nullLogger = Object.freeze({ log() {} });
 /** The boundary also protects callers using an injected/test logger that throws. */
 export function log(logger, level, event, fields = {}, error) {
@@ -83,22 +83,23 @@ export class Logger {
       if (!LOG_LEVELS.includes(level)) return;
       if (typeof event !== 'string' || !/^PSST_[A-Z0-9_]{1,80}$/.test(event)) return;
       const metadata = { ...safeFields(context.getStore()), ...safeFields(fields) };
-      if (event === 'PSST_STORAGE_TRANSACTION_COMMITTED' && this.backgroundFailures.size) {
-        const repeated = [...this.backgroundFailures.values()].reduce((sum, entry) => sum + entry.count, 0);
-        this.backgroundFailures.clear();
-        this.log('info', 'PSST_STORAGE_TRANSACTION_RECOVERED', { repeated });
+      // Only the owning operation can declare recovery. Another successful
+      // transaction (for example sweep after failed auth reload) proves nothing.
+      const recoveredOperation = ({PSST_AUTH_RELOAD_RECOVERED:'authentication',PSST_AUTH_MAINTENANCE_RECOVERED:'authentication',PSST_MAINTENANCE_RECOVERED:'sweep'})[event];
+      if (recoveredOperation) for (const [key, entry] of this.backgroundFailures) {
+        if (entry.operation === recoveredOperation) this.backgroundFailures.delete(key);
       }
       if (LOG_LEVELS.indexOf(level) < LOG_LEVELS.indexOf(this.level)) return;
       const info = error === undefined ? undefined : diagnostic(error);
       if (!metadata.request_id && ['PSST_STORAGE_TRANSACTION_FAILED','PSST_STORAGE_ROLLBACK_FAILED'].includes(event)) {
-        const key = `${event}:${metadata.phase}:${info?.reason}`, now = this.clock(), prior = this.backgroundFailures.get(key);
+        const key = `${event}:${metadata.operation}:${metadata.phase}:${info?.reason}`, now = this.clock(), prior = this.backgroundFailures.get(key);
         if (prior) {
           prior.count++;
           if (now - prior.at < 60000) return;
           metadata.repeated = prior.count; prior.count = 0; prior.at = now;
         } else {
           if (this.backgroundFailures.size >= 32) return;
-          this.backgroundFailures.set(key, { at: now, count: 0 });
+          this.backgroundFailures.set(key, { at: now, count: 0, operation: metadata.operation });
         }
       }
       const words = event.slice(5).toLowerCase().replaceAll('_', ' ');

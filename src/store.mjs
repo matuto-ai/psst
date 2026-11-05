@@ -185,7 +185,11 @@ export class BrokerStore {
       if(this.requireRegistrationV2) this.db.exec('UPDATE registration_control SET enforced=1 WHERE id=1');
       if(this.limits.session_retention_seconds && !this.db.prepare('SELECT enforced FROM registration_control WHERE id=1').get().enforced) throw new Error('Session cleanup requires explicit registration v2 enforcement.');
       this.db.exec('PRAGMA user_version=5; COMMIT');
-    }catch(e){this.db.exec('ROLLBACK');throw e;}
+    }catch(e){
+      // Startup must retain the first cause even when SQLite already aborted.
+      if(this.db.isTransaction)try{this.db.exec('ROLLBACK');}catch(rollbackError){log(this.logger,'error','PSST_STORAGE_ROLLBACK_FAILED',{phase:'rollback',operation:'startup',transaction_active:this.db.isTransaction},rollbackError);}
+      throw e;
+    }
   }
   // Lifecycle records are held until the owning transaction has a known success.
   diagnostic(level, event, fields = {}) {

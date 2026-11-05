@@ -154,7 +154,7 @@ export function createBrokerServer({ store, auth, enrollment, approval, admin, r
     });
   }
   function reloadCredentials(){
-    try{auth.reload();failures.recover('auth','PSST_AUTH_MAINTENANCE_RECOVERED',{operation:'reload'});return true;}
+    try{withLogContext({operation:'authentication'},()=>auth.reload());failures.recover('auth','PSST_AUTH_MAINTENANCE_RECOVERED',{operation:'reload'});return true;}
     catch(e){failures.fail('auth','PSST_AUTH_MAINTENANCE_FAILED',{operation:'reload'},e);return false;}
   }
   function readiness(){
@@ -165,7 +165,7 @@ export function createBrokerServer({ store, auth, enrollment, approval, admin, r
   function maintenance(){
     reloadCredentials();
     // Credential reload failures must not starve safe expiration/cleanup work.
-    try{store.sweep();failures.recover('sweep','PSST_MAINTENANCE_RECOVERED',{operation:'sweep'});}
+    try{withLogContext({operation:'sweep'},()=>store.sweep());failures.recover('sweep','PSST_MAINTENANCE_RECOVERED',{operation:'sweep'});}
     catch(e){failures.fail('sweep','PSST_MAINTENANCE_FAILED',{operation:'sweep'},e);}
     readiness();
   }

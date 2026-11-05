@@ -110,5 +110,21 @@ test('background storage failures are summarized without suppressing request-cor
   for(let n=0;n<2;n++)withLogContext({request_id:randomUUID()},()=>log(logger,'error','PSST_STORAGE_TRANSACTION_FAILED',{phase:'statement'},Error()));
   assert.equal(records.length,4);
   log(logger,'debug','PSST_STORAGE_TRANSACTION_COMMITTED');
-  assert.equal(records.at(-1).event,'PSST_STORAGE_TRANSACTION_RECOVERED');assert.equal(logger.backgroundFailures.size,0);
+  assert.equal(records.length,4,'an unrelated commit does not establish recovery');assert.equal(logger.backgroundFailures.size,1);
+});
+
+test('successful sweep cannot clear recurring authorization transaction failures',t=>{
+  const {logger,records}=capture(),f=fixture(t,{logger});records.length=0;let failing=true;
+  const auth={ready:true,reload(){
+    if(failing){this.ready=false;f.store.tx(()=>{throw Object.assign(Error('private'),{errcode:13});});}
+    this.ready=true;
+  }};
+  const app=createBrokerServer({store:f.store,auth,logger,insecureDevelopment:true});
+  for(let n=0;n<10;n++)app.maintenance();
+  assert.equal(records.filter(r=>r.event==='PSST_STORAGE_TRANSACTION_FAILED').length,1);
+  assert.equal(records.filter(r=>r.event.includes('RECOVERED')).length,0);
+  failing=false;app.maintenance();
+  assert.equal(records.filter(r=>r.event==='PSST_AUTH_MAINTENANCE_RECOVERED').length,1);
+  failing=true;app.maintenance();
+  assert.equal(records.filter(r=>r.event==='PSST_STORAGE_TRANSACTION_FAILED').length,2,'a new fault after real recovery is immediately visible');
 });

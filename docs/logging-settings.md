@@ -54,8 +54,9 @@ not happen. Reconcile using the original idempotency key/receipt.
 Repeated credential/maintenance failures are emitted initially and summarized
 at most once per minute per operation, followed by a recovery event. Background
 storage transaction/rollback failures are similarly bounded, while each HTTP
-failure retains its request correlation. Counters/maps are bounded. A successful
-subsequent transaction clears the background transaction failure summary.
+failure retains its request correlation. Counters/maps are bounded. Only recovery of the owning authentication or sweep operation clears its
+background failure summary. An unrelated successful transaction is not evidence
+of recovery.
 
 ### Useful codes and causes
 

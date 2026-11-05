@@ -212,3 +212,37 @@ test('recipient retirement hashes legacy request without losing original default
   f.store.limits.default_ttl_seconds=120;
   assert.deepEqual(f.store.send(f.a.entry,a.client_id,reconnected.lease_epoch,'retired',body),first);
 });
+
+test('migration preserves the primary failure after automatic rollback and after failed active rollback',t=>{
+  const f=fixture(t),db=f.store.db,prepare=db.prepare.bind(db),exec=db.exec.bind(db);
+  const primary=Object.assign(new Error('synthetic private primary'),{errcode:13});
+  for(const automatic of [true,false]){
+    db.prepare=sql=>{
+      if(sql.includes('INSERT OR IGNORE INTO send_defaults'))return {run(){if(automatic)exec('ROLLBACK');throw primary;}};
+      return prepare(sql);
+    };
+    db.exec=sql=>{if(!automatic&&sql==='ROLLBACK')throw Error('synthetic private rollback');return exec(sql);};
+    assert.throws(()=>f.store.migrate(),error=>error===primary);
+    if(db.isTransaction)exec('ROLLBACK');
+  }
+  db.prepare=prepare;db.exec=exec;
+  assert.equal(f.store.safe(),true);
+});
+test('real SQLite disk-full during migration retains errcode 13 after automatic rollback',t=>{
+  const f=fixture(t),db=f.store.db,prepare=db.prepare.bind(db);
+  db.exec('CREATE TABLE migration_full(payload BLOB)');
+  const pages=db.prepare('PRAGMA page_count').get().page_count;
+  db.exec(`PRAGMA max_page_count=${pages}`);
+  let original;
+  db.prepare=sql=>{
+    if(sql.includes('INSERT OR IGNORE INTO send_defaults'))return {run(){
+      try{prepare('INSERT INTO migration_full VALUES(zeroblob(1048576))').run();}
+      catch(error){original=error;throw error;}
+    }};
+    return prepare(sql);
+  };
+  assert.throws(()=>f.store.migrate(),error=>error===original&&error.errcode===13);
+  assert.equal(db.isTransaction,false);db.prepare=prepare;
+  db.exec('PRAGMA max_page_count=2147483646');
+  f.store.migrate();assert.equal(f.store.safe(),true);
+});
