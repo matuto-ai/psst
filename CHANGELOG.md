@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.7.1 (source candidate; publish separately)
+
+- Remove hover underline from the administration brand while preserving its
+  navigation destination and visible keyboard focus. Delivered in #62 / #63.
+- Align version metadata and image instructions for the separately published patch.
+
+### 0.7.1 upgrade notes
+
+No database schema, authorization, receipt or transport changes from 0.7.0.
+Existing grants, identities and settings remain unchanged. Follow the consistent
+backup procedure before upgrading; this patch does not create a new migration
+snapshot or activate session cleanup. Earlier [0.7.0 upgrade notes](#070-upgrade-notes)
+still apply when upgrading from older versions.
+
+Publish `v0.7.1` from the reviewed, verified commit. Do not reuse published tags.
+Source preparation does not publish an image or deploy an installation.
+
 ## 0.7.0 (source candidate; publish separately)
 
 - Hide revoked installation authorizations from normal administration lists after

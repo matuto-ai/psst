@@ -2,18 +2,18 @@
 
 The normal server package is a **Linux/amd64** image, with Node 24.19.0 and SQLite 3.53.3 inside it. No host Node installation, client launcher, generated certificate or generated credential is needed to start it.
 
-## 0.7.0 source candidate
+## 0.7.1 source candidate
 
 This branch prepares source and aligned version metadata only. It does **not**
 publish a tag, GitHub Release or image, and does not deploy a broker. Do not pull
 the version below until its release workflow has actually succeeded. Review the
-[upgrade and compatibility notes](../CHANGELOG.md#070-upgrade-notes)
+[upgrade and compatibility notes](../CHANGELOG.md#071-upgrade-notes)
 before updating an existing installation.
 
-The 0.7.0 candidate includes the administration favicon, configurable finite
-authorization lifetime and bounded revoked-list visibility with durable
-revocation records. It preserves existing grants and receipts without automatic
-renewal. See [authorization settings and distinct clocks](approval-operator.md#configure-authorization-lifetime).
+The 0.7.1 patch removes hover underline from administration branding while
+preserving navigation and keyboard focus. It makes no schema, authorization or
+transport changes from 0.7.0. The favicon, configurable authorization lifetime
+and durable revocation behavior introduced in 0.7.0 remain unchanged. See [authorization settings and distinct clocks](approval-operator.md#configure-authorization-lifetime).
 
 The registration-v2 support and optional disconnected-session retention from
 0.6.0 remain unchanged. Cleanup remains **disabled by default** and legacy registration stays
@@ -39,15 +39,15 @@ or native-agent acceptance in the operator's environment.
 
 ## Pull and run
 
-**The image is not published by a source-code push.** Use these commands after GitHub Release `v0.7.0` has completed its Release image workflow successfully. Versioned image: `ghcr.io/matuto-ai/psst:0.7.0`.
+**The image is not published by a source-code push.** Use these commands after GitHub Release `v0.7.1` has completed its Release image workflow successfully. Versioned image: `ghcr.io/matuto-ai/psst:0.7.1`.
 
 ```sh
-docker pull ghcr.io/matuto-ai/psst:0.7.0
+docker pull ghcr.io/matuto-ai/psst:0.7.1
 docker run -d --name ai-agent-msg-broker --restart unless-stopped \
   --read-only --cap-drop ALL --security-opt no-new-privileges \
   -p 127.0.0.1:8787:8787 \
   -v ai-agent-msg-broker-data:/data \
-  ghcr.io/matuto-ai/psst:0.7.0
+  ghcr.io/matuto-ai/psst:0.7.1
 curl --fail --show-error --max-time 5 http://127.0.0.1:8787/healthz
 ```
 
@@ -83,7 +83,7 @@ To enroll adapters later, mount a dedicated private directory containing `config
 ## Publish a release — operator action
 
 1. Review and merge the release preparation PR. Select that exact reviewed commit for the release.
-2. Keep `package.json` version and release tag aligned: current version `0.7.0` requires tag **`v0.7.0`**. For another version, update `package.json`, test and commit it first.
+2. Keep `package.json` version and release tag aligned: current version `0.7.1` requires tag **`v0.7.1`**. For another version, update `package.json`, test and commit it first.
 3. In GitHub, publish the release at the reviewed commit. Publishing, not merely saving a draft or pushing a tag, triggers **Release image**.
 4. The workflow runs syntax checks and the focused unit suite against the immutable release event commit. Only after success does it build and push the Linux/amd64 image using the repository's short-lived `GITHUB_TOKEN` with `packages: write`. No registry secret setup is required for this workflow.
 5. Stable releases publish `:VERSION` and `:latest`; prereleases publish only `:VERSION`. The run summary records pull command and image digest. Prefer a version/digest for deployment. Published version tags should not be reused for different source.
