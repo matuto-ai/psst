@@ -91,6 +91,7 @@ After independent review/provisioning, an operator can adapt:
 podman run --name ai-agent-msg-broker --rm \
   --userns=keep-id --user "$(id -u):$(id -g)" \
   --read-only --cap-drop=ALL --security-opt=no-new-privileges \
+  --tmpfs /tmp:rw,noexec,nosuid,nodev,size=64m,mode=1777 \
   --volume "${STATE_DIR:?Set private state directory}:/data:Z" \
   --volume "${PRIVATE_DIR:?Set private configuration directory}:/run/broker:ro,Z" \
   --publish "${LAN_BIND_ADDRESS:?Choose explicit LAN bind address}:8787:8787" \

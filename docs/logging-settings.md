@@ -6,17 +6,22 @@ or establish the cause of any past live incident.
 
 ## Structured diagnostics
 
-The normal entrypoint writes one JSON record per line to stderr. Each record has
-an English `message`, stable `PSST_*` event code, `timestamp`, `level`, package
-`version` and random per-process `run_id`. HTTP operations also carry the same
-`request_id` returned in `X-Request-ID` and API errors, a normalized route and
-method. Store records inherit this request context, including asynchronous polls.
+The normal entrypoint writes one human-readable line per event to stderr. No viewer or `jq` is needed for `docker logs`. Lines include UTC time, severity, a stable `PSST_*` event code, an English explanation and allowlisted operational fields. HTTP operations carry the same `request_id` returned in `X-Request-ID` and API errors, plus a normalized route and method. Store records inherit this request context, including asynchronous polls. Version and per-process `run_id` appear at broker startup or startup failure; bounded source locations appear in text only at debug level.
+
+Set `PSST_LOG_FORMAT=json` for existing structured-log collectors, or `PSST_LOG_FORMAT=text` for the default. This deployment setting requires restart and does not change the Settings log-level preference. JSON retains timestamp, level, event, message, version, run_id, correlation, diagnostic stacks and all safe transaction flags at every enabled level. Invalid format values fail startup.
+
+For example, a storage failure now explains the cause and remedy instead of requiring a numeric-code lookup:
+
+```text
+ERROR PSST_STORAGE_TRANSACTION_FAILED: Storage transaction failed. SQLite cannot find a writable temporary directory. Mount a writable /tmp (tmpfs) in the container; keep /data unchanged. Rolled back; nothing was saved.
+```
+
+The actual line also contains its timestamp, request ID, route, SQLite name/code and rollback/outcome fields. Advice is generated from recognized codes, never arbitrary exception text.
 
 Select the minimum level in Settings, the private configuration's
 `settings.log_level`, or `PSST_LOG_LEVEL`:
 
-- `debug`: message acceptance, claim/renew/complete/cancel, expected expiry,
-  heartbeat/presence, authorization checks, request boundaries and transactions.
+- `debug`: message acceptance, claim/renew/complete/cancel, expected expiry, heartbeat/presence, authentication, request boundaries and confirmed rollbacks. Successful authentication is logged once per HTTP request, not on each internal long-poll recheck. Empty poll and maintenance transactions no longer emit a generic commit line; lifecycle records still require confirmed commit.
 - `info` (default): broker lifecycle, connections/disconnections, authorization
   requests/decisions, configuration changes and operational recovery.
 - `warning`: rejected requests, conflicts, failed administrator login,
@@ -75,7 +80,9 @@ of recovery.
 | `PSST_CLIENT_*`, `PSST_MESSAGE_*`, `PSST_MESSAGES_EXPIRED` | Transport lifecycle only. Delivered still means durable recipient inbox receipt, never model processing. |
 | `PSST_SETTINGS_UPDATED` | Validated preferences were durably saved. The log threshold may filter this info event. |
 
-Recognized SQLite causes include `sqlite_disk_full` (base code 13), `sqlite_busy`
+SQLite extended code **6410**, `SQLITE_IOERR_GETTEMPPATH`, is reported as `sqlite_temp_directory_unavailable`, with a fixed hint to mount writable `/tmp` while preserving `/data`. It is not collapsed into generic I/O failure. See the [read-only container correction](docker-release.md#writable-temporary-storage-is-required); free space in `/data` alone does not establish usable temporary storage.
+
+Recognized SQLite causes also include `sqlite_disk_full` (base code 13), `sqlite_busy`
 (5), `sqlite_locked` (6), `sqlite_read_only` (8), `sqlite_io_failure` (10),
 `sqlite_corrupt` (11), `sqlite_cannot_open` (14), and `sqlite_constraint` (19).
 `sqlite_code` retains the numeric SQLite code, including an extended code when
@@ -192,5 +199,4 @@ Focused unit tests use temporary SQLite databases, fake clocks, injected sinks,
 in-memory HTTP/admin requests and real SQLite failure conditions. They cover
 redaction, sink failure, correlation, levels, repeated failures/recovery,
 transaction uncertainty, Settings security/persistence/bounds, future-only clocks
-and omitted-TTL replay. No live HTTP/browser/native connector/container/production
-integration certification is claimed. CI checks the pinned runtime separately.
+and omitted-TTL replay. The focused container storage check in `test/container-storage.mjs` additionally covers startup failure with no writable temporary directory and successful send/retry/claim/completion/receipt with the `/tmp` mount under a read-only root filesystem. The release workflow gates publication on both cases. These checks do not certify a running production mount layout, HTTP/proxy/browser/native-connector behavior or the cause of the older 0.7.1 outage.

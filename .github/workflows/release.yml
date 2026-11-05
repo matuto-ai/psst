@@ -47,6 +47,17 @@ jobs:
             --label "org.opencontainers.image.version=$VERSION" \
             --label "org.opencontainers.image.revision=$REVISION" \
             -t "$IMAGE:$VERSION" .
+      - name: Verify temporary storage and message delivery in the read-only runtime
+        env:
+          IMAGE: ${{ steps.plan.outputs.image }}
+          VERSION: ${{ steps.plan.outputs.version }}
+        run: |
+          options=(--rm --network=none --read-only --cap-drop=ALL --security-opt=no-new-privileges
+            --tmpfs /data:rw,noexec,nosuid,nodev,size=128m,mode=1777
+            -v "$PWD/test:/app/test:ro")
+          docker run "${options[@]}" "$IMAGE:$VERSION" node /app/test/container-storage.mjs --expect-temp-failure
+          docker run "${options[@]}" --tmpfs /tmp:rw,noexec,nosuid,nodev,size=64m,mode=1777 \
+            "$IMAGE:$VERSION" node /app/test/container-storage.mjs
       - name: Log in to GHCR only for this user-published release
         uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:

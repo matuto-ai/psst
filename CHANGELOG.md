@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.7.3 (source candidate; publish separately)
+
+- Provide writable, size-limited `/tmp` in read-only Compose and Quadlet examples while preserving persistent `/data` and the read-only root filesystem.
+- Check real SQLite temporary-file storage at startup before migrations and session rewriting, reporting unusable temporary storage immediately. Classify extended code 6410 as `SQLITE_IOERR_GETTEMPPATH` with actionable, privacy-safe guidance. This does not establish the cause of the older 0.7.1 outage.
+- Default to human-readable stderr logs; retain structured JSON through `PSST_LOG_FORMAT=json`. Log successful authentication once per HTTP request and remove generic transaction-commit noise without weakening long-poll authorization rechecks or commit-gated lifecycle events.
+- Gate image publication on read-only container storage checks: missing temporary storage must fail startup; writable temporary storage must support send, idempotent retry, claim, completion and receipt.
+
+### 0.7.3 upgrade notes
+
+No database schema, wire protocol, authorization, expiry or retention changes from 0.7.2. Keep existing grants, connector identities and the same `/data` volume; follow the consistent backup procedure before upgrading. Earlier [0.7.2 upgrade notes](#072-upgrade-notes) still apply to upgrades from older versions.
+
+A writable temporary directory is now required at startup. Add the documented `/tmp` tmpfs to the existing service and recreate it; a plain restart does not add mounts. Never remove the persistent data volume to apply this correction. The tmpfs mount can also address the missing temporary-directory failure on 0.7.2 without changing its image.
+
+Log collectors expecting JSON must set `PSST_LOG_FORMAT=json` before upgrading. The default is now human-readable text. Log level remains independently configurable through existing Settings/environment controls.
+
+Publish `v0.7.3` separately from the reviewed, verified commit. Source preparation does not publish an image or change a running deployment. See [release instructions](docs/docker-release.md).
+
 ## 0.7.2 (source candidate; publish separately)
 
 - Add private English structured diagnostics with stable event codes, bounded

@@ -91,6 +91,7 @@ export function createBrokerServer({ store, auth, enrollment, approval, admin, r
         return reply(res,issued.status,issued.result);
       }
       const principal=auth.authenticate(req.headers.authorization); // all API routes, including unknown ones
+      log(logger,'debug','PSST_AUTHENTICATION_ACCEPTED'); // Once per request, not each long-poll iteration.
       if(stopping)throw new ApiError(503,'not_ready',null,{retryable:true});
       if(req.headers.origin)throw new ApiError(403,'forbidden','headers.Origin');
       // Query-string authentication and duplicate parameters are never accepted.

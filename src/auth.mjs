@@ -51,7 +51,6 @@ export class CredentialStore {
     let found;
     for(const entry of this.entries){if(timingSafeEqual(hash,Buffer.from(entry.token_sha256,'hex')))found=entry;}
     if(!match||!found){log(this.logger,'debug','PSST_AUTHENTICATION_REJECTED',{code:'unauthenticated'});throw new ApiError(401,'unauthenticated','headers.Authorization');}
-    log(this.logger,'debug','PSST_AUTHENTICATION_ACCEPTED');
     return found;
   }
 }

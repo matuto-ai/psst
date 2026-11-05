@@ -45,9 +45,14 @@ export function diagnostic(error) {
     if (Number.isInteger(error?.errcode) && error.errcode > 0 && error.errcode <= 65535) {
       info.sqlite_code = error.errcode;
       info.reason = sqliteReasons[error.errcode & 255] ?? 'sqlite_failure';
+      if (error.errcode === 6410) {
+        info.reason = 'sqlite_temp_directory_unavailable';
+        info.sqlite_name = 'SQLITE_IOERR_GETTEMPPATH';
+        info.hint = 'Mount a writable /tmp (tmpfs) in the container; keep /data unchanged.';
+      }
     } else if (Object.hasOwn(systemReasons, error?.code ?? '')) info.reason = systemReasons[error.code];
     else if (publicCodes.has(error?.code)) { info.reason = 'api_rejection'; info.code = error.code; }
-    else if (['invalid_authorization_days','missing_configuration'].includes(error?.code)) { info.reason = 'invalid_configuration'; info.code = error.code; }
+    else if (['invalid_authorization_days','missing_configuration','invalid_log_format'].includes(error?.code)) { info.reason = 'invalid_configuration'; info.code = error.code; }
     else if (error?.name === 'SyntaxError') info.reason = 'invalid_json_or_syntax';
     else if (error?.name === 'TypeError') info.reason = 'invalid_type';
     else if (error?.name === 'RangeError') info.reason = 'out_of_range';
@@ -69,14 +74,46 @@ export function log(logger, level, event, fields = {}, error) {
   try { logger?.log(level, event, fields, error); } catch { /* Diagnostics cannot change an operation's result. */ }
 }
 
+function humanMessage(event, fields, info) {
+  const words = event.slice(5).toLowerCase().replaceAll('_', ' ');
+  let message = words[0].toUpperCase() + words.slice(1) + '.';
+  if (info?.reason === 'sqlite_temp_directory_unavailable') message += ' SQLite cannot find a writable temporary directory. ' + info.hint;
+  else if (info?.reason === 'invalid_configuration' && info.code === 'invalid_log_format') message += ' PSST_LOG_FORMAT must be text or json.';
+  if (event === 'PSST_STORAGE_TRANSACTION_FAILED') {
+    message += fields.effect === 'not_applied' ? ' Rolled back; nothing was saved.' : ' Outcome uncertain; reconcile using the original idempotency key.';
+    if (fields.poisoned) message += ' Storage is unusable; fix the storage failure before restarting.';
+  }
+  if (event === 'PSST_HTTP_REQUEST_FAILED' && fields.code === 'stale_lease_epoch') message += ' Session lease is stale; the client must register again.';
+  return message;
+}
+function textRecord(record, debug) {
+  const { timestamp, level, event, message, version, run_id, error, method, route, ...fields } = record;
+  const details = Object.entries(fields)
+    .filter(([key, value]) => value !== false || !['committed','commit_attempted','transaction_active'].includes(key))
+    .map(([key, value]) => `${key}=${value}`);
+  if (['PSST_BROKER_STARTED','PSST_STARTUP_FAILED'].includes(event)) details.push(`version=${version}`, `run_id=${run_id}`);
+  if (method || route) details.unshift([method, route].filter(Boolean).join(' '));
+  if (error) {
+    details.push(`cause=${error.reason}`);
+    if (error.code && !fields.code) details.push(`code=${error.code}`);
+    if (error.sqlite_code) details.push(`sqlite=${error.sqlite_name ?? error.sqlite_code}${error.sqlite_name ? `(${error.sqlite_code})` : ''}`);
+    if (debug && error.stack) details.push(`at=${error.stack.join(',')}`);
+  }
+  return `${timestamp} ${level.toUpperCase()} ${event}: ${message}${details.length ? ' | ' + details.join(' ') : ''}\n`;
+}
+
 export class Logger {
-  constructor({ level = 'info', sink = line => writeSync(2, line), clock = Date.now, version = 'unknown' } = {}) {
-    this.setLevel(level); this.sink = sink; this.clock = clock; this.runId = randomUUID(); this.backgroundFailures = new Map();
+  constructor({ level = 'info', format = 'text', sink = line => writeSync(2, line), clock = Date.now, version = 'unknown' } = {}) {
+    this.setLevel(level); this.setFormat(format); this.sink = sink; this.clock = clock; this.runId = randomUUID(); this.backgroundFailures = new Map();
     this.version = /^\d+\.\d+\.\d+$/.test(version) ? version : 'unknown';
   }
   setLevel(level) {
     if (!LOG_LEVELS.includes(level)) throw new Error('Log level must be debug, info, warning or error.');
     this.level = level;
+  }
+  setFormat(format) {
+    if (!['text', 'json'].includes(format)) throw Object.assign(new Error('Log format must be text or json.'), {code:'invalid_log_format'});
+    this.format = format;
   }
   log(level, event, fields = {}, error) {
     try {
@@ -102,10 +139,9 @@ export class Logger {
           this.backgroundFailures.set(key, { at: now, count: 0, operation: metadata.operation });
         }
       }
-      const words = event.slice(5).toLowerCase().replaceAll('_', ' ');
-      const record = { timestamp: new Date(this.clock()).toISOString(), level, event, message: words[0].toUpperCase() + words.slice(1) + '.', version: this.version, run_id: this.runId, ...metadata };
+      const record = { timestamp: new Date(this.clock()).toISOString(), level, event, message: humanMessage(event, metadata, info), version: this.version, run_id: this.runId, ...metadata };
       if (info !== undefined) record.error = info;
-      this.sink(JSON.stringify(record) + '\n');
+      this.sink(this.format === 'json' ? JSON.stringify(record) + '\n' : textRecord(record, this.level === 'debug'));
     } catch { /* Logging is best effort, including serialization and sink failures. */ }
   }
 }

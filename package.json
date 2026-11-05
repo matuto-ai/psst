@@ -1,7 +1,7 @@
 {
   "name": "ai-agent-msg-broker",
   "description": "Psst: authenticated registry and durable opaque-message delivery for independent AI sessions",
-  "version": "0.7.2",
+  "version": "0.7.3",
   "private": true,
   "type": "module",
   "engines": {

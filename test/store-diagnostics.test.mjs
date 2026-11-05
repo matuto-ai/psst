@@ -6,7 +6,7 @@ import { Logger } from '../src/logger.mjs';
 
 function observed(t, options = {}) {
   const records = [];
-  const logger = new Logger({level:'debug', sink:line=>records.push(JSON.parse(line))});
+  const logger = new Logger({level:'debug', format:'json', sink:line=>records.push(JSON.parse(line))});
   const f = fixture(t, {logger, ...options});
   records.length = 0;
   return {f, records};

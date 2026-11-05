@@ -2,22 +2,11 @@
 
 The normal server package is a **Linux/amd64** image, with Node 24.19.0 and SQLite 3.53.3 inside it. No host Node installation, client launcher, generated certificate or generated credential is needed to start it.
 
-## 0.7.2 source candidate
+## 0.7.3 source candidate
 
-This branch prepares source and aligned version metadata only. It does **not**
-publish a tag, GitHub Release or image, and does not deploy a broker. Do not pull
-the version below until its release workflow has actually succeeded. Review the
-[upgrade and compatibility notes](../CHANGELOG.md#072-upgrade-notes)
-before updating an existing installation.
+This branch prepares source and aligned version metadata only. It does **not** publish a tag, GitHub Release or image, and does not deploy a broker. Do not pull the version below until its release workflow has actually succeeded. Review the [upgrade and compatibility notes](../CHANGELOG.md#073-upgrade-notes) before updating an existing installation.
 
-The 0.7.2 patch adds private structured diagnostics, persistent administrator
-Settings and a correction for SQLite automatic rollback after a statement
-failure. Logs retain safe causes and request correlation without message content
-or credentials. Settings control log level and distinct future expiration
-durations; existing grants and expiry timestamps are unchanged. Exact omitted-TTL
-replays retain their accepted default across later Settings changes and restarts.
-The isolated SQLite reproduction does not establish the cause of a past live 503.
-See [diagnostics, Settings and replay compatibility](logging-settings.md).
+The 0.7.3 patch provides writable temporary storage for read-only container deployments and verifies real SQLite temporary-file storage at startup. Human-readable logs explain SQLite 6410 and its remedy; use `PSST_LOG_FORMAT=json` for existing structured-log collectors. Successful authentication is logged once per request, and generic transaction-commit noise is removed. Image publication requires the container storage checks to pass. There are no schema or protocol changes from 0.7.2, and the cause of the older 0.7.1 outage remains unproven. See [diagnostics and Settings](logging-settings.md).
 
 Settings and per-send TTL metadata use additive tables; existing schema-5
 databases stay at schema 5. They receive no new automatic migration snapshot for
@@ -50,15 +39,16 @@ or native-agent acceptance in the operator's environment.
 
 ## Pull and run
 
-**The image is not published by a source-code push.** Use these commands after GitHub Release `v0.7.2` has completed its Release image workflow successfully. Versioned image: `ghcr.io/matuto-ai/psst:0.7.2`.
+**The image is not published by a source-code push.** Use these commands after GitHub Release `v0.7.3` has completed its Release image workflow successfully. Versioned image: `ghcr.io/matuto-ai/psst:0.7.3`.
 
 ```sh
-docker pull ghcr.io/matuto-ai/psst:0.7.2
+docker pull ghcr.io/matuto-ai/psst:0.7.3
 docker run -d --name ai-agent-msg-broker --restart unless-stopped \
   --read-only --cap-drop ALL --security-opt no-new-privileges \
+  --tmpfs /tmp:rw,noexec,nosuid,nodev,size=64m,mode=1777 \
   -p 127.0.0.1:8787:8787 \
   -v ai-agent-msg-broker-data:/data \
-  ghcr.io/matuto-ai/psst:0.7.2
+  ghcr.io/matuto-ai/psst:0.7.3
 curl --fail --show-error --max-time 5 http://127.0.0.1:8787/healthz
 ```
 
@@ -69,6 +59,19 @@ The shipped configuration deliberately has **no enrolled credentials**: `/health
 After the operator's existing HTTPS proxy is connected, `https://YOUR_BROKER_HOST/healthz` should return the same body using ordinary verified certificate trust. Proxy, DNS, certificates, firewall and network selection are operator-owned; this repository does not configure them. The backend is plaintext and **must stay on an isolated trusted same-host proxy path, not be exposed directly to the LAN or Internet**. Container-network peers able to reach it are part of that trust boundary. Do not use host networking, privileged mode or disabled certificate verification to make it work.
 
 Docker publishes on all host interfaces if the host IP is omitted. Keep a deliberate binding or private proxy network; the example uses loopback. Use a supported Docker version (28+ for the documented localhost-publishing isolation fix). See [Docker port publishing](https://docs.docker.com/engine/network/port-publishing/).
+
+### Writable temporary storage is required
+
+Keep the root filesystem read-only and mount a separate writable `/tmp`, as above. SQLite needs temporary files even when the persistent database and WAL in `/data` have plenty of space. The tmpfs is disposable; `/data` remains the existing persistent volume. Startup now forces a 4 MiB SQLite temporary-table spill before migrations or session rewriting, so an unusable temporary directory fails immediately instead of waiting for a message operation. It leaves no probe table in the persistent schema.
+
+For an existing Compose service, add this under that service, preserving its current image, volumes, environment, ports and proxy configuration:
+
+```yaml
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=64m,mode=1777
+```
+
+Recreate only that service with `docker compose up -d --no-deps SERVICE_NAME` (replace the name with the existing service). A plain `docker restart` does not add mounts. Do not use `down -v`, remove the data volume, or make the entire root filesystem writable. Adding the mount also works around the missing temporary-directory failure for 0.7.2; the new startup check and readable logs require a newly built image.
 
 ### Compose alternative
 
@@ -94,9 +97,9 @@ To enroll adapters later, mount a dedicated private directory containing `config
 ## Publish a release — operator action
 
 1. Review and merge the release preparation PR. Select that exact reviewed commit for the release.
-2. Keep `package.json` version and release tag aligned: current version `0.7.2` requires tag **`v0.7.2`**. For another version, update `package.json`, test and commit it first.
+2. Keep `package.json` version and release tag aligned: current version `0.7.3` requires tag **`v0.7.3`**. For another version, update `package.json`, test and commit it first.
 3. In GitHub, publish the release at the reviewed commit. Publishing, not merely saving a draft or pushing a tag, triggers **Release image**.
-4. The workflow runs syntax checks and the focused unit suite against the immutable release event commit. Only after success does it build and push the Linux/amd64 image using the repository's short-lived `GITHUB_TOKEN` with `packages: write`. No registry secret setup is required for this workflow.
+4. The workflow runs syntax checks and the focused unit suite against the immutable release event commit, builds the Linux/amd64 image, then checks SQLite temporary storage and send/retry/claim/completion/receipt on disposable tmpfs mounts with a read-only root filesystem. It also verifies startup fails with SQLite 6410 when `/tmp` is not writable. Only after success does it push using the repository's short-lived `GITHUB_TOKEN` with `packages: write`. No registry secret setup is required for this workflow.
 5. Stable releases publish `:VERSION` and `:latest`; prereleases publish only `:VERSION`. The run summary records pull command and image digest. Prefer a version/digest for deployment. Published version tags should not be reused for different source.
 
 GHCR's first package may initially be private even for a public repository. The operator must choose package visibility/access if anonymous `docker pull` is wanted; the workflow does not silently change it. See [GitHub Container registry authentication and visibility](https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-container-registry).
@@ -112,7 +115,17 @@ docker build --target runtime -f Containerfile -t broker-runtime:local .
 # Use broker-runtime:local in the docker run command above.
 ```
 
-CI does not build or launch containers. The release workflow builds the runtime image after unit verification; connectivity, proxy configuration, persistence across a real process restart and native behavior are not certified by those tests. Verify the chosen deployment separately.
+Push/PR CI runs syntax and unit tests. The release workflow also runs the container storage checks before publication. To run that focused check locally after building:
+
+```sh
+docker run --rm --network=none --read-only --cap-drop=ALL --security-opt=no-new-privileges \
+  --tmpfs /data:rw,noexec,nosuid,nodev,size=128m,mode=1777 \
+  --tmpfs /tmp:rw,noexec,nosuid,nodev,size=64m,mode=1777 \
+  -v "$PWD/test:/app/test:ro" \
+  broker-runtime:local node /app/test/container-storage.mjs
+```
+
+To check the negative case, omit the `/tmp` mount and append `--expect-temp-failure`. These commands use disposable `/data`, never an existing broker volume. For Podman, also pass `--read-only-tmpfs=false` so its implicit temporary mounts cannot hide the negative case. Connectivity, proxy configuration, persistence across a real process restart and native behavior are not certified by this storage check. Verify the chosen deployment separately.
 
 ## Enroll native clients after the connectivity check
 

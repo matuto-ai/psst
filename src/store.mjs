@@ -84,6 +84,8 @@ export class BrokerStore {
       this.db = new DatabaseSync(this.path);
       chmodSync(this.path, 0o600);
       this.db.exec('PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=1000; PRAGMA trusted_schema=OFF;');
+      // Force a real temp-file spill, then release the probe's temporary database.
+      this.db.exec('PRAGMA temp_store=FILE; CREATE TEMP TABLE psst_temp_probe(data BLOB); INSERT INTO psst_temp_probe VALUES(zeroblob(4194304)); PRAGMA temp_store=DEFAULT;');
       if(deferMigration) { this.closed=false; return; }
       this.initialize();
     } catch (e) {
@@ -217,7 +219,6 @@ export class BrokerStore {
       phase = 'after_commit';
       this.fault('after_commit');
       this.pendingDiagnostics = null;
-      log(this.logger, 'debug', 'PSST_STORAGE_TRANSACTION_COMMITTED', {phase:'commit', committed:true});
       for (const [level, event, fields] of diagnostics) log(this.logger, level, event, fields);
       return result;
     } catch (error) {
