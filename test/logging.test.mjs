@@ -7,7 +7,7 @@ import { Logger, log, FailureTracker, diagnostic, normalizedRoute, withLogContex
 import { createBrokerServer } from '../src/server.mjs';
 import { CredentialStore } from '../src/auth.mjs';
 import { fixture, registration, sendBody } from './helpers.mjs';
-const capture = (options={}) => { const records=[]; const logger=new Logger({...options,sink:line=>records.push(JSON.parse(line))});return {logger,records}; };
+const capture = (options={}) => { const records=[]; const logger=new Logger({format:'json',...options,sink:line=>records.push(JSON.parse(line))});return {logger,records}; };
 async function request(app,url,{method='GET',headers={},body}={}) {
   const req=Readable.from(body===undefined?[]:[Buffer.from(JSON.stringify(body))]);
   Object.assign(req,{url,method,headers:{...(body===undefined?{}:{'content-type':'application/json'}),...headers},socket:{remoteAddress:'127.0.0.1'}});
@@ -32,6 +32,29 @@ test('diagnostics discard private messages, headers, arbitrary names/paths and S
   const raw=JSON.stringify(records);assert.ok(!raw.includes(secret));assert.ok(!raw.includes('/private/'));assert.ok(!raw.includes('SELECT'));
   assert.deepEqual(records[0].error,{reason:'sqlite_disk_full',sqlite_code:13,stack:['store.mjs:12:34']});
   assert.equal(records[0].phase,'commit');assert.equal(records[0].reason,undefined);
+});
+test('temporary-directory errors have an actionable safe diagnosis in JSON and default human-readable logs',()=>{
+  const secret='PRIVATE_TOKEN_AND_PATH';
+  const error=Object.assign(Error(secret),{errcode:6410});
+  const {logger,records}=capture();
+  const request_id=randomUUID(), fields={request_id,method:'POST',route:'/v1/messages',phase:'statement',effect:'not_applied',rollback_confirmed:true,poisoned:false};
+  log(logger,'error','PSST_STORAGE_TRANSACTION_FAILED',fields,error);
+  assert.equal(records[0].error.reason,'sqlite_temp_directory_unavailable');
+  assert.equal(records[0].error.sqlite_name,'SQLITE_IOERR_GETTEMPPATH');
+  assert.match(records[0].error.hint,/writable \/tmp/);
+  assert.match(records[0].message,/nothing was saved/);
+  const lines=[],human=new Logger({sink:line=>lines.push(line)});
+  log(human,'error','PSST_STORAGE_TRANSACTION_FAILED',{...fields,content:secret,path:secret},error);
+  assert.equal(lines.length,1);
+  assert.match(lines[0],/ERROR PSST_STORAGE_TRANSACTION_FAILED/);
+  assert.match(lines[0],/POST \/v1\/messages/);
+  assert.ok(lines[0].includes(request_id));
+  assert.match(lines[0],/SQLITE_IOERR_GETTEMPPATH\(6410\)/);
+  assert.match(lines[0],/writable \/tmp/);
+  assert.equal(lines[0].split('\n').length,2);
+  assert.ok(!lines[0].includes(secret));assert.ok(!JSON.stringify(records).includes(secret));
+  human.setFormat('json');log(human,'info','PSST_TEST');assert.equal(JSON.parse(lines[1]).event,'PSST_TEST');
+  assert.throws(()=>human.setFormat('PRIVATE'),e=>e.code==='invalid_log_format');
 });
 test('known OS errors are classified without their filenames and exception accessors cannot break logging',()=>{
   assert.equal(diagnostic(Object.assign(new Error('/secret/file'),{code:'EACCES'})).reason,'permission_denied');
@@ -71,7 +94,7 @@ test('HTTP failure correlates request ID without exposing private cause or raw U
   assert.equal(failed.request_id,result.headers['X-Request-ID']);assert.equal(failed.route,'unknown');assert.equal(failed.error.reason,'disk_full');
   assert.ok(!JSON.stringify({records,result}).includes('PRIVATE'));assert.ok(!JSON.stringify(records).includes('private-secret'));
 });
-test('HTTP message events and transaction diagnostics share correlation without message content',async t=>{
+test('HTTP request and message lifecycle diagnostics share correlation without message content',async t=>{
   const {logger,records}=capture({level:'debug'}),f=fixture(t,{logger}),a=registration(),b=registration();
   const app=createBrokerServer({store:f.store,auth:f.auth,logger,insecureDevelopment:true});
   const auth={authorization:`Bearer ${f.a.token}`};
@@ -79,9 +102,20 @@ test('HTTP message events and transaction diagnostics share correlation without 
   await request(app,'/v1/sessions',{method:'POST',headers:{authorization:`Bearer ${f.b.token}`},body:b});records.length=0;
   const result=await request(app,'/v1/messages',{method:'POST',headers:{...auth,'x-client-id':a.client_id,'x-lease-epoch':'1','idempotency-key':'synthetic-key'},body:sendBody(b.client_id,'PRIVATE_MESSAGE_TEXT')});
   assert.equal(result.status,202);const id=result.headers['X-Request-ID'];
-  assert.ok(records.some(r=>r.event==='PSST_STORAGE_TRANSACTION_COMMITTED'&&r.request_id===id));
+  assert.ok(records.some(r=>r.event==='PSST_HTTP_REQUEST_FINISHED'&&r.request_id===id));
   assert.ok(records.some(r=>r.message_id===result.body.message_id&&r.request_id===id));
   const raw=JSON.stringify(records);for(const secret of ['PRIVATE_MESSAGE_TEXT',f.a.token,f.b.token,'synthetic-key','same-name'])assert.ok(!raw.includes(secret));
+});
+test('long polling rechecks authentication but logs success only once and omits empty transaction noise',async t=>{
+  const {logger,records}=capture({level:'debug'}),f=fixture(t,{logger}),a=registration();
+  f.store.register(f.a.entry,a);records.length=0;
+  let checks=0;
+  const auth={authenticate(header){checks++;return f.auth.authenticate(header);}};
+  const app=createBrokerServer({store:f.store,auth,logger,insecureDevelopment:true,pollIntervalMs:20});
+  const result=await request(app,'/v1/mailbox/claim',{method:'POST',headers:{authorization:`Bearer ${f.a.token}`,'x-client-id':a.client_id,'x-lease-epoch':'1','idempotency-key':'empty-poll'},body:{wait_seconds:1}});
+  assert.equal(result.status,204);assert.ok(checks>2);
+  assert.equal(records.filter(r=>r.event==='PSST_AUTHENTICATION_ACCEPTED').length,1);
+  assert.equal(records.filter(r=>r.event==='PSST_STORAGE_TRANSACTION_COMMITTED').length,0);
 });
 test('maintenance preserves sweep after reload failure, limits repeated reports and logs recovery/readiness',()=>{
   const {logger,records}=capture();let fails=true,sweeps=0;

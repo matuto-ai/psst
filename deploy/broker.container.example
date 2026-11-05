@@ -11,6 +11,7 @@ ContainerName=ai-agent-msg-broker
 UserNS=keep-id
 User=REPLACE_WITH_OPERATOR_UID:REPLACE_WITH_OPERATOR_GID
 ReadOnly=true
+Tmpfs=/tmp:rw,noexec,nosuid,nodev,size=64m,mode=1777
 NoNewPrivileges=true
 DropCapability=all
 Volume=%h/.local/share/ai-agent-msg-broker/data:/data:Z

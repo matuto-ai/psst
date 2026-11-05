@@ -13,6 +13,7 @@ const logger=new Logger({version:JSON.parse(readFileSync(new URL('../package.jso
 const configFile=process.env.BROKER_CONFIG_FILE;
 let store,app,phase='configuration';
 try{
+  logger.setFormat(process.env.PSST_LOG_FORMAT ?? 'text');
   if(!configFile){const error=new Error();error.code='missing_configuration';throw error;}
   const config=JSON.parse(readFileSync(configFile,'utf8'));
   const allowed=['database','credential_file','host','port','insecure_development','proxy_loopback','proxy_transport','tls','limits','enrollment_policy_file','require_registration_v2','settings'];
